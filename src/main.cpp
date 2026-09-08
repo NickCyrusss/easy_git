@@ -1683,6 +1683,7 @@ void save_frame(const char* path, int w, int h) {
 }
 
 #ifndef EASY_GIT_UI_TEST
+#include "app_icon.h"
 int main(int argc, char** argv) {
     std::vector<std::string> roots; std::string screenshot, config_file; int frames = 0;
     for (int i = 1; i < argc; ++i) {
@@ -1700,8 +1701,12 @@ int main(int argc, char** argv) {
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR,3); glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR,3);
     glfwWindowHint(GLFW_OPENGL_PROFILE,GLFW_OPENGL_CORE_PROFILE);
     glfwWindowHint(GLFW_VISIBLE,GLFW_FALSE);
+    glfwWindowHintString(GLFW_X11_CLASS_NAME,"easy_git");
+    glfwWindowHintString(GLFW_X11_INSTANCE_NAME,"easy_git");
     auto* window = glfwCreateWindow(1440,900,"Easy Git - repository workspace",nullptr,nullptr);
     if (!window) { glfwTerminate(); return 1; }
+    GLFWimage icon{64,64,app_icon_pixels};
+    glfwSetWindowIcon(window,1,&icon);
     glfwMakeContextCurrent(window); glfwSwapInterval(1);
     IMGUI_CHECKVERSION(); ImGui::CreateContext(); theme();
     auto& io = ImGui::GetIO(); io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard; io.IniFilename = nullptr;

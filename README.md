@@ -34,6 +34,16 @@ cmake --build build -j 4
 ./build/easy_git
 ```
 
+The executable embeds its window/taskbar icon. To add Easy Git to your Linux application menu with an icon, install it for the current user:
+
+```sh
+cmake -S . -B build -DCMAKE_INSTALL_PREFIX="$HOME/.local"
+cmake --build build -j 4
+cmake --install build
+```
+
+This installs the executable, desktop launcher, and icon. Launch **Easy Git** from the application menu; file managers may still show a generic icon for the ELF executable itself.
+
 Use **Browse...** to choose a repository, or pass one or more paths:
 
 ```sh
@@ -149,6 +159,12 @@ xvfb-run -a -s '-screen 0 1440x900x24' \
 ```
 
 Screenshots in `docs/` come from the running application with temporary demonstration repositories. Mouse-driven checks cover staging one hunk, confirming discard of another while preserving staged content, and unstaging the first hunk while retaining its working-tree edits. Native window resizing and restart restoration were also checked under Xvfb: resizing to 1220 × 780 automatically saved only width/height, and the next launch restored that size.
+
+Check the embedded icon and desktop window identity (requires Python 3, `xvfb`, `xauth`, and `xprop` from `x11-utils`). The test runs a relocated executable with temporary settings:
+
+```sh
+xvfb-run -a python3 tests/icon_smoke.py build/easy_git
+```
 
 ## Current limitations
 

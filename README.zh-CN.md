@@ -30,6 +30,16 @@ cmake --build build -j 4
 ./build/easy_git /绝对路径/仓库A /绝对路径/仓库B
 ```
 
+可执行程序已内嵌窗口／任务栏图标。若要在 Linux 应用菜单中显示带图标的 **Easy Git**，可安装到当前用户目录：
+
+```sh
+cmake -S . -B build -DCMAKE_INSTALL_PREFIX="$HOME/.local"
+cmake --build build -j 4
+cmake --install build
+```
+
+安装包含程序、桌面启动入口和图标。请从应用菜单启动；文件管理器中的 ELF 可执行文件本身仍可能显示通用图标。
+
 也可直接运行 `./build/easy_git`，点击 **Browse...** 浏览并选择文件夹，再点击 **Open repository**；也支持手动输入路径。取消浏览会保留原路径。文件夹浏览使用系统 Zenity 选择器，未安装时会提示并保留手动输入入口。可打开仓库子目录，操作会自动定位至仓库根目录。
 
 ImGui 固定为 `v1.92.5`，GLFW 固定为 `3.4`，首次配置时由 CMake 下载并校验 SHA-256。离线构建可通过 `FETCHCONTENT_SOURCE_DIR_IMGUI`、`FETCHCONTENT_SOURCE_DIR_GLFW` 指定本地源码；也支持 `.deps/imgui-1.92.5` 和 `.deps/glfw-3.4`。
@@ -141,6 +151,12 @@ xvfb-run -a -s '-screen 0 1440x900x24' \
 ```
 
 `docs/` 的截图来自真实临时测试仓库。按区块操作已用真实鼠标验证：暂存一个区块、确认丢弃另一区块并保留暂存内容，再取消暂存第一个区块并保留工作区改动。新版界面已用实际鼠标、键盘检查多仓库切换、草稿保留、单文件暂存、提交文件列表与 Diff、Path / Tree 切换及 1080×720 布局。Git 操作界面另验证了 Local / Remote / Stash 折叠、Stash 预览与 Apply / Delete、Cherry-pick 和 Hard Reset 的勾选保护及执行。新增分支定位检查使用 341 个提交验证跨页跳转及 Remote 定位；Discard 检查验证取消、确认及保留暂存内容；另用真实 Ctrl / Shift 按键和鼠标验证多选、Tree 折叠范围、批量暂存/丢弃及窄窗口工具栏。主题/AI 界面已验证中文生成结果填入、浅色与深色切换、设置编辑保存和重启后当前仓库恢复。窗口尺寸另经 Xvfb 实测：调整为 1220 × 780 后自动保存宽高，重启恢复相同尺寸；不保存窗口位置或分栏布局。
+
+验证内嵌图标与桌面窗口标识（需要 Python 3、`xvfb`、`xauth` 和 `x11-utils` 提供的 `xprop`）。测试将程序复制到临时目录，并使用临时配置运行：
+
+```sh
+xvfb-run -a python3 tests/icon_smoke.py build/easy_git
+```
 
 ## 当前边界
 

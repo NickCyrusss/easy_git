@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Easy Git
+Comment=Browse repositories and manage Git changes
+Comment[zh_CN]=浏览仓库并管理 Git 改动
+Exec="@CMAKE_INSTALL_FULL_BINDIR@/easy_git" %F
+Icon=easy_git
+Terminal=false
+Categories=Development;RevisionControl;
+StartupWMClass=easy_git
