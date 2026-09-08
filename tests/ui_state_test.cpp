@@ -231,6 +231,19 @@ int main() {
         settings_button(60);
         auto saved_config = eg::read_settings(restored.config_path);
         require(saved_config.ai.model == "persisted-test-model" && saved_config.ai_profiles.at("Kimi").model == "saved-kimi-model", "Save settings lost a switched-away profile");
+        RepoTab editor;
+        editor.set_resolution("before\n<<<<<<< HEAD\nours\n||||||| base\nbase\n=======\ntheirs >>>>>>> inline\n>>>>>>> side\nafter\n<<<<<<< HEAD\nleft\n=======\nright\n>>>>>>> side\n");
+        require(editor.conflict_blocks().size() == 2,"Conflict editor did not parse diff3/multiple blocks");
+        editor.choose_conflict_block(2);
+        require(editor.conflict_blocks().size() == 1 && std::string(editor.resolution.data()).find("ours\ntheirs >>>>>>> inline\nafter") != std::string::npos,"Use both damaged surrounding text or kept base markers");
+        editor.choose_conflict_block(1);
+        require(std::string(editor.resolution.data()) == "before\nours\ntheirs >>>>>>> inline\nafter\nright\n","Conflict choices did not preserve context");
+        editor.set_detail("diff --git a/file b/file\n@@ -1,2 +1,2 @@\n-old\n+new\n same\n");
+        editor.pick_line(2,false,false); editor.pick_line(3,false,true);
+        require(editor.selected_lines.size() == 2,"Shift did not select changed diff lines");
+        editor.pick_line(2,true,false);
+        require(editor.selected_lines.size() == 1 && editor.selected_lines.count(3),"Ctrl did not toggle a diff line");
+        editor.set_detail("refreshed"); require(editor.selected_lines.empty(),"Diff refresh retained stale line selections");
         snprintf(restored.tabs[0]->message,sizeof(restored.tabs[0]->message),"Keep existing draft");
         restored.tabs[0]->generate_message();
         while (restored.busy()) { frame(restored); std::this_thread::sleep_for(std::chrono::milliseconds(5)); }

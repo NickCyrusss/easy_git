@@ -118,6 +118,10 @@ struct JobResult {
     bool ai_generated = false;
     eg::CommitMessage generated;
     std::string original_summary, original_description;
+    eg::Conflict conflict;
+    eg::PushTarget push;
+    bool conflict_selection = false, push_selection = false;
+    std::string created_path;
     eg::Commit commit;
     std::vector<eg::File> files;
     std::string detail, message, error, folder, preview_file, navigation_ref;
@@ -135,6 +139,15 @@ struct RepoTab {
     const eg::AiSettings* ai_settings = nullptr;
     std::string opened_path;
     bool generating = false;
+    std::set<int> selected_lines;
+    int line_anchor = -1, open_mode = 0, conflict_number = 0;
+    char clone_url[4096] = {}, initial_branch[256] = "main";
+    eg::Ref pending_branch;
+    eg::PushTarget pending_push;
+    eg::Conflict conflict;
+    std::vector<char> resolution;
+    std::string binary_resolution;
+    bool conflict_open = false, resolving_conflict = false, remove_resolution = false, binary_chosen = false;
     bool just_opened = false, show_diff = false, tree_view = false;
     std::string requested_open, commit_body;
     eg::Commit viewed_commit;
@@ -172,7 +185,7 @@ struct RepoTab {
     bool idle() const { return ready() && repo.operation.empty(); }
 
     void set_detail(std::string text) {
-        detail = std::move(text); detail_lines.clear();
+        detail = std::move(text); detail_lines.clear(); selected_lines.clear(); line_anchor = -1;
         std::istringstream lines(detail);
         int before = 0, after = 0; bool hunk = false;
         for (std::string line; std::getline(lines, line);) {
@@ -375,6 +388,14 @@ struct RepoTab {
         if (!busy() || job.wait_for(std::chrono::seconds(0)) != std::future_status::ready) return;
         try {
             auto r = job.get(); previewing = false; generating = false;
+            if (!r.created_path.empty()) { requested_open = r.created_path; status = r.message; return; }
+            if (r.push_selection) { pending_push = std::move(r.push); pending_kind = "force push"; hard_confirm = false; return; }
+            if (r.conflict_selection) {
+                conflict = std::move(r.conflict); set_resolution(conflict.working);
+                conflict_number = 0; remove_resolution = false; binary_chosen = false; conflict_open = true;
+                status = "Resolve conflict: " + conflict.path; return;
+            }
+            if (resolving_conflict) { resolving_conflict = false; if (r.error.empty()) conflict_open = false; }
             if (r.ai_generated) {
                 if (r.original_summary != message || r.original_description != description)
                     throw std::runtime_error("Commit draft changed during AI generation. Generate again to replace the current draft.");
@@ -491,6 +512,7 @@ struct RepoTab {
         bool saved = stash_view; auto stash = viewed_stash;
         launch("Loading diff...", [root, stop, file, staged, working, commit, saved, stash] {
             eg::Git git(root, stop); JobResult r;
+            if (working && file.conflicted()) { r.conflict = git.read_conflict(file); r.conflict_selection = true; return r; }
             r.detail = working ? git.diff(file, staged) : saved ? git.stash_diff(stash,file) : git.commit_diff(commit, file);
             r.message = "Viewing " + visible_path(file.path); return r;
         });
@@ -532,6 +554,10 @@ struct RepoTab {
         ImGui::SameLine(); if (button("Fetch", ready(), {70,36})) command("Fetch", {"fetch", "--all"});
         ImGui::SameLine(); if (button("Pull", idle(), {64,36})) command("Pull", {"pull", "--ff-only"});
         ImGui::SameLine(); if (button("Push", ready(), {64,36})) command("Push", {"push"});
+        if (ImGui::BeginPopupContextItem("push_menu")) {
+            if (ImGui::MenuItem("Force push with lease...",nullptr,false,ready() && repo.has_head)) prepare_force_push();
+            ImGui::EndPopup();
+        }
         ImGui::SameLine(); if (button("Refresh", ready(), {83,36})) load(repo.root);
         ImGui::EndChild();
     }
@@ -560,6 +586,11 @@ struct RepoTab {
                     eg::Commit target; target.id = ref.id; target.subject = ref.name;
                     request_operation("merge",target);
                 }
+                if ((prefix == "refs/heads/" || prefix == "refs/remotes/") &&
+                    ImGui::MenuItem("Delete branch...",nullptr,false,idle() && !current && ref.name.find("/HEAD") == std::string::npos)) {
+                    pending_branch = ref; pending_kind = "delete branch"; hard_confirm = false;
+                }
+                if (current && ImGui::MenuItem("Force push with lease...",nullptr,false,ready())) prepare_force_push();
                 if (ImGui::MenuItem("Copy reference")) ImGui::SetClipboardText(ref.full.c_str());
                 ImGui::EndPopup();
             }
@@ -712,6 +743,141 @@ struct RepoTab {
         if (repo.more && button("Load 300 more commits", ready(), {-1,30})) { limit += 300; load(repo.root); }
     }
 
+    void create_repository() {
+        std::string destination = fs::absolute(path).string(), url = clone_url, branch = initial_branch;
+        int mode = open_mode; auto stop = cancel;
+        launch(mode == 1 ? "Cloning repository..." : "Initializing repository...",[destination,url,branch,mode,stop] {
+            if (mode == 1) eg::Git::clone(url,destination,stop); else eg::Git::initialize(destination,branch);
+            eg::Git(destination,stop).load(1);
+            JobResult r; r.created_path = destination; r.message = "Repository ready"; return r;
+        });
+    }
+    void prepare_force_push() {
+        auto root = repo.root; auto stop = cancel;
+        launch("Reading push target...",[root,stop] {
+            JobResult r; r.push = eg::Git(root,stop).push_target(); r.push_selection = true; return r;
+        });
+    }
+    bool partial_available() const {
+        if (!workspace || !ready()) return false;
+        auto found = std::find_if(repo.files.begin(),repo.files.end(),[&](const auto& f) { return f.path == selected_file; });
+        return found != repo.files.end() && !found->conflicted() && found->original.empty();
+    }
+    bool changed_line(int i) const {
+        const auto& row = detail_lines[i];
+        return (row.before || row.after) && !row.text.empty() && (row.text[0] == '+' || row.text[0] == '-');
+    }
+    void pick_line(int index,bool ctrl,bool shift) {
+        if (!ctrl) selected_lines.clear();
+        if (shift && line_anchor >= 0) {
+            for (int i = std::min(index,line_anchor); i <= std::max(index,line_anchor); ++i)
+                if (changed_line(i)) selected_lines.insert(i);
+        } else {
+            if (ctrl && selected_lines.count(index)) selected_lines.erase(index); else selected_lines.insert(index);
+            line_anchor = index;
+        }
+    }
+    void stage_diff_lines(std::vector<int> selection) {
+        auto found = std::find_if(repo.files.begin(),repo.files.end(),[&](const auto& f) { return f.path == selected_file; });
+        if (!partial_available() || found == repo.files.end()) return;
+        auto file = *found; auto patch = detail; bool unstage = selected_staged;
+        mutate(unstage ? "Unstage selected lines" : "Stage selected lines",[file,patch,unstage,selection](const eg::Git& git) {
+            git.stage_lines(file,unstage,patch,selection);
+        });
+    }
+    void stage_hunk(int header) {
+        std::vector<int> selected;
+        for (int i = header+1; i < int(detail_lines.size()); ++i) {
+            if (detail_lines[i].text.rfind("@@",0) == 0 || detail_lines[i].text.rfind("diff ",0) == 0) break;
+            if (changed_line(i)) selected.push_back(i);
+        }
+        stage_diff_lines(std::move(selected));
+    }
+    void set_resolution(const std::string& text) {
+        resolution.assign(1024*1024+1,0);
+        std::copy_n(text.data(),std::min(text.size(),resolution.size()-1),resolution.data());
+    }
+    struct ConflictBlock { size_t begin, ours, base, divider, theirs, closing, end; };
+    std::vector<ConflictBlock> conflict_blocks() const {
+        std::string text(resolution.empty() ? "" : resolution.data()); std::vector<ConflictBlock> blocks;
+        auto marker = [&](const char* token,size_t start) {
+            for (auto pos = text.find(token,start); pos != std::string::npos; pos = text.find(token,pos+1))
+                if (pos == 0 || text[pos-1] == '\n') return pos;
+            return std::string::npos;
+        };
+        size_t pos = 0;
+        while ((pos = marker("<<<<<<<",pos)) != std::string::npos) {
+            auto ours = text.find('\n',pos), divider = marker("=======",pos), end = marker(">>>>>>>",pos);
+            if (ours == std::string::npos || divider == std::string::npos || end == std::string::npos || divider > end) break;
+            auto theirs = text.find('\n',divider), after = text.find('\n',end), base = marker("|||||||",ours);
+            if (theirs == std::string::npos) break;
+            blocks.push_back({pos,ours+1,base < divider ? base : divider,divider,theirs+1,end,after == std::string::npos ? text.size() : after+1});
+            pos = blocks.back().end;
+        }
+        return blocks;
+    }
+    void choose_conflict_block(int choice) {
+        auto blocks = conflict_blocks(); if (blocks.empty()) return;
+        auto block = blocks[std::min(conflict_number,int(blocks.size())-1)]; std::string text(resolution.data());
+        auto closing = block.closing;
+        auto ours = text.substr(block.ours,block.base-block.ours), theirs = text.substr(block.theirs,closing-block.theirs);
+        text.replace(block.begin,block.end-block.begin,choice == 0 ? ours : choice == 1 ? theirs : ours+theirs);
+        set_resolution(text); conflict_number = 0;
+    }
+    void conflict_dialog() {
+        if (conflict_open && !ImGui::IsPopupOpen("Resolve conflict")) ImGui::OpenPopup("Resolve conflict");
+        auto size = ImGui::GetMainViewport()->WorkSize;
+        ImGui::SetNextWindowSize({std::min(1080.0f,size.x-40),std::min(760.0f,size.y-50)},ImGuiCond_Appearing);
+        if (!ImGui::BeginPopupModal("Resolve conflict",nullptr)) return;
+        if (!conflict_open) { ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
+        ImGui::TextWrapped("%s",visible_path(conflict.path).c_str());
+        ImGui::TextWrapped("Stage 2 = ours; stage 3 = theirs. During rebase, these refer to the rebased base and replayed commit.");
+        ImGui::BeginDisabled(busy());
+        if (ImGui::BeginTable("versions",2,ImGuiTableFlags_SizingStretchSame)) {
+            for (int side = 0; side < 2; ++side) {
+                ImGui::TableNextColumn(); ImGui::PushID(side);
+                auto& content = side == 0 ? conflict.ours : conflict.theirs;
+                bool exists = side == 0 ? conflict.has_ours : conflict.has_theirs;
+                ImGui::TextUnformatted(side == 0 ? "OURS (stage 2)" : "THEIRS (stage 3)");
+                if (button(exists ? "Use entire version" : "Accept deletion")) {
+                    remove_resolution = !exists; binary_chosen = true; binary_resolution = content; set_resolution(content);
+                }
+                ImGui::BeginChild("source",{0,145},ImGuiChildFlags_Borders,ImGuiWindowFlags_HorizontalScrollbar);
+                if (!exists) label("Deleted in this version");
+                else if (conflict.binary) label("Binary file: choose an entire version");
+                else { ImGui::PushFont(mono_font,13); ImGui::TextUnformatted(content.c_str()); ImGui::PopFont(); }
+                ImGui::EndChild(); ImGui::PopID();
+            }
+            ImGui::EndTable();
+        }
+        if (!conflict.binary && !remove_resolution) {
+            auto blocks = conflict_blocks();
+            if (!blocks.empty()) {
+                conflict_number = std::min(conflict_number,int(blocks.size())-1);
+                auto preview = "Conflict " + std::to_string(conflict_number+1) + " / " + std::to_string(blocks.size());
+                ImGui::SetNextItemWidth(155);
+                if (ImGui::BeginCombo("##conflict_block",preview.c_str())) {
+                    for (int i=0;i<int(blocks.size());++i) if (ImGui::Selectable(("Conflict "+std::to_string(i+1)).c_str(),i==conflict_number)) conflict_number=i;
+                    ImGui::EndCombo();
+                }
+                ImGui::SameLine(); if (button("Use ours")) choose_conflict_block(0);
+                ImGui::SameLine(); if (button("Use theirs")) choose_conflict_block(1);
+                ImGui::SameLine(); if (button("Use both")) choose_conflict_block(2);
+            }
+            ImGui::TextUnformatted("RESULT - edit below, then save and mark resolved");
+            ImGui::PushFont(mono_font,14);
+            ImGui::InputTextMultiline("##resolution",resolution.data(),resolution.size(),{-1,std::max(70.0f,ImGui::GetContentRegionAvail().y-54)},ImGuiInputTextFlags_AllowTabInput);
+            ImGui::PopFont();
+        } else ImGui::TextUnformatted(remove_resolution ? "Result: delete this file" : "Choose a whole version to resolve this binary file.");
+        if (button("Save and mark resolved",!conflict.binary || binary_chosen)) {
+            auto saved = conflict; bool remove = remove_resolution;
+            auto result = conflict.binary ? binary_resolution : std::string(resolution.data());
+            mutate("Resolve conflict",[saved,result,remove](const eg::Git& git) { git.save_resolution(saved,result,remove); });
+            resolving_conflict = true;
+        }
+        ImGui::SameLine(); if (button("Cancel")) { conflict_open = false; ImGui::CloseCurrentPopup(); }
+        ImGui::EndDisabled(); ImGui::EndPopup();
+    }
     void diff_view() {
         ImGui::BeginChild("diff", {0,0}, 0, ImGuiWindowFlags_HorizontalScrollbar);
         ImGui::PushFont(mono_font, 14);
@@ -728,16 +894,31 @@ struct RepoTab {
                 ImVec4 color = ImGui::GetStyleColorVec4(ImGuiCol_Text);
                 if (!line.empty() && (row.before || row.after) && (line[0] == '+' || line[0] == '-')) {
                     bool added = line[0] == '+';
-                    draw->AddRectFilled(p, {p.x+width,p.y+h}, added ? IM_COL32(44,92,69,75) : IM_COL32(125,51,64,65));
+                    draw->AddRectFilled(p, {p.x+width,p.y+h}, added ? IM_COL32(44,92,69,35) : IM_COL32(125,51,64,30));
                     color = added ? mint : red;
                 } else if (line.rfind("@@",0) == 0 || line.rfind("diff ",0) == 0) color = light_theme ? ImVec4(0.43f,0.27f,0.66f,1) : ImVec4(0.66f,0.57f,0.91f,1);
+                if (selected_lines.count(i)) draw->AddRectFilled(p,{p.x+width,p.y+h},ImGui::GetColorU32(ImGuiCol_Header));
                 auto number = [&](int n, float x) {
                     if (n) draw->AddText({x,p.y+3},ImGui::GetColorU32(muted),std::to_string(n).c_str());
                 };
                 number(row.before,p.x+4); number(row.after,p.x+48);
                 draw->AddLine({p.x+90,p.y},{p.x+90,p.y+h},IM_COL32(61,69,84,120));
                 draw->AddText({p.x+103,p.y+3},ImGui::GetColorU32(color),line.c_str());
-                ImGui::Dummy({width,h});
+                ImGui::PushID(i);
+                if (partial_available() && line.rfind("@@ ",0) == 0) {
+                    ImGui::SetCursorScreenPos({p.x+std::max(0.0f,ImGui::GetContentRegionAvail().x-114),p.y});
+                    if (button(selected_staged ? "Unstage hunk" : "Stage hunk",true,{114,h})) stage_hunk(i);
+                    ImGui::SetCursorScreenPos({p.x,p.y+h});
+                } else if (partial_available() && changed_line(i)) {
+                    if (ImGui::InvisibleButton("line",{width,h})) pick_line(i,ImGui::GetIO().KeyCtrl,ImGui::GetIO().KeyShift);
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Click / Ctrl / Shift to select changed lines");
+                    if (ImGui::BeginPopupContextItem()) {
+                        if (!selected_lines.count(i)) pick_line(i,false,false);
+                        if (ImGui::MenuItem(selected_staged ? "Unstage selected lines" : "Stage selected lines")) stage_diff_lines({selected_lines.begin(),selected_lines.end()});
+                        ImGui::EndPopup();
+                    }
+                } else ImGui::Dummy({width,h});
+                ImGui::PopID();
             }
         }
         ImGui::PopStyleVar(); ImGui::PopFont(); ImGui::EndChild();
@@ -751,6 +932,11 @@ struct RepoTab {
         ImGui::Spacing();
         ImGui::PushFont(body_font,20); ImGui::TextUnformatted(visible_path(selected_file).c_str()); ImGui::PopFont();
         label(workspace ? "Working changes / Inline diff" : stash_view ? "Saved changes / Inline diff" : "Commit changes / Inline diff");
+        if (workspace) {
+            if (button(selected_staged ? "Unstage lines" : "Stage lines",partial_available() && !selected_lines.empty()))
+                stage_diff_lines({selected_lines.begin(),selected_lines.end()});
+            ImGui::SameLine(); ImGui::TextColored(muted,"%zu selected",selected_lines.size());
+        }
         ImGui::Separator();
         diff_view();
     }
@@ -922,7 +1108,7 @@ struct RepoTab {
                 ImGui::SameLine();
                 if (button("Skip...",ready())) { pending_kind = "skip"; pending_operation = operation; }
             }
-            if (conflicts) ImGui::TextWrapped("Resolve conflicts in your editor, then stage the resolved files.");
+            if (conflicts) ImGui::TextWrapped("Click a conflicted file to open the editor, then save and mark resolved.");
             ImGui::Separator();
         }
         if (workspace) {
@@ -995,7 +1181,15 @@ struct RepoTab {
         ImGui::Separator();
         bool stash = pending_kind == "apply stash" || pending_kind == "delete stash";
         bool resolve = pending_kind == "abort" || pending_kind == "skip";
-        if (pending_kind == "discard files") {
+        if (pending_kind == "force push") {
+            ImGui::TextWrapped("Push %s (%s) to %s / %s",pending_push.branch.c_str(),pending_push.local.substr(0,12).c_str(),pending_push.remote.c_str(),pending_push.ref.c_str());
+            ImGui::TextWrapped("Replace remote history only if its tip still matches %s. New remote commits will cause rejection.",pending_push.expected.substr(0,12).c_str());
+            ImGui::Checkbox("I understand this rewrites remote branch history",&hard_confirm);
+        } else if (pending_kind == "delete branch") {
+            ImGui::TextWrapped("Delete %s at %s?",pending_branch.full.c_str(),pending_branch.id.substr(0,12).c_str());
+            if (pending_branch.full.rfind("refs/heads/",0) == 0) ImGui::Checkbox("Allow deleting an unmerged branch",&hard_confirm);
+            else ImGui::TextWrapped("This deletes the branch on the remote server. A changed remote tip will cause rejection.");
+        } else if (pending_kind == "discard files") {
             ImGui::Text("Discard unstaged changes in %zu files?",pending_files.size());
             ImGui::BeginChild("discard_files",{0,std::min(160.0f,28.0f*pending_files.size()+10)},ImGuiChildFlags_Borders);
             for (const auto& file : pending_files) ImGui::TextWrapped("%s%s",file.index == '?' ? "[Delete] " : "",visible_path(file.path).c_str());
@@ -1039,13 +1233,15 @@ struct RepoTab {
             }
         }
         ImGui::Spacing();
-        bool enabled = ready() && (pending_kind != "reset" || reset_mode != 2 || hard_confirm);
+        bool enabled = ready() && (pending_kind != "reset" || reset_mode != 2 || hard_confirm) && (pending_kind != "force push" || hard_confirm);
         if (button("Confirm",enabled)) {
             auto kind = pending_kind; auto commit = pending_commit; auto saved = pending_stash;
-            auto files = pending_files;
+            auto files = pending_files; auto branch = pending_branch; auto push = pending_push; bool force = hard_confirm;
             auto operation = pending_operation; int parent = mainline, mode = reset_mode; bool index = restore_index;
-            mutate(kind,[kind,commit,saved,operation,parent,mode,index,files](const eg::Git& git) {
-                if (kind == "cherry-pick") git.cherry_pick(commit,parent);
+            mutate(kind,[kind,commit,saved,operation,parent,mode,index,files,branch,push,force](const eg::Git& git) {
+                if (kind == "delete branch") git.delete_branch(branch,force);
+                else if (kind == "force push") git.force_push(push);
+                else if (kind == "cherry-pick") git.cherry_pick(commit,parent);
                 else if (kind == "revert") git.revert(commit,parent);
                 else if (kind == "merge") git.merge(commit.id);
                 else if (kind == "reset") git.reset(commit.id,mode == 0 ? "soft" : mode == 1 ? "mixed" : "hard");
@@ -1065,14 +1261,25 @@ struct RepoTab {
         if (opening) { ImGui::OpenPopup("Open repository"); opening = false; browse_error.clear(); }
         ImGui::SetNextWindowSize({580,0}, ImGuiCond_Appearing);
         if (ImGui::BeginPopupModal("Open repository",nullptr,ImGuiWindowFlags_AlwaysAutoResize)) {
-            ImGui::TextWrapped("Enter a repository path or browse for a folder.");
+            ImGui::BeginDisabled(busy());
+            ImGui::RadioButton("Open",&open_mode,0); ImGui::SameLine(); ImGui::RadioButton("Clone",&open_mode,1);
+            ImGui::SameLine(); ImGui::RadioButton("Initialize",&open_mode,2);
+            if (open_mode == 1) { ImGui::SetNextItemWidth(-1); ImGui::InputTextWithHint("##clone_url","Repository URL (SSH / HTTPS / local path)",clone_url,sizeof(clone_url)); }
+            if (open_mode == 2) { ImGui::TextUnformatted("Initial branch"); ImGui::SetNextItemWidth(-1); ImGui::InputTextWithHint("##initial_branch","Initial branch",initial_branch,sizeof(initial_branch)); }
+            ImGui::EndDisabled();
+            ImGui::TextWrapped(open_mode == 0 ? "Enter a repository path or browse for a folder." : open_mode == 1 ? "Choose a new or empty destination folder." : "Initialize a folder. Existing files are kept and are not committed automatically.");
             ImGui::BeginDisabled(busy());
             ImGui::SetNextItemWidth(-104);
             bool enter = ImGui::InputTextWithHint("##path", "/home/you/projects/repository",path,sizeof(path),ImGuiInputTextFlags_EnterReturnsTrue);
             ImGui::SameLine();
             if (button("Browse...", !busy(), {94,0})) { browse_error.clear(); browse_folder(); }
-            bool open = button("Open repository", !busy() && path[0]);
-            if ((enter || open) && !busy() && path[0]) { requested_open = path; ImGui::CloseCurrentPopup(); }
+            bool valid = path[0] && (open_mode != 1 || clone_url[0]) && (open_mode != 2 || initial_branch[0]);
+            bool open = button(open_mode == 0 ? "Open repository" : open_mode == 1 ? "Clone repository" : "Initialize repository", !busy() && valid);
+            if ((enter || open) && !busy() && valid) {
+                if (open_mode == 0) requested_open = path;
+                else create_repository();
+                ImGui::CloseCurrentPopup();
+            }
             ImGui::SameLine(); if (button("Cancel")) ImGui::CloseCurrentPopup();
             ImGui::EndDisabled();
             if (busy()) label("Choose a folder in the system dialog, or cancel there.");
@@ -1094,6 +1301,7 @@ struct RepoTab {
             ImGui::SameLine(); if (button("Cancel")) { new_kind.clear(); ImGui::CloseCurrentPopup(); }
             ImGui::EndPopup();
         }
+        conflict_dialog();
         operation_dialog();
         if (!error.empty() && !ImGui::IsPopupOpen("Git operation failed")) ImGui::OpenPopup("Git operation failed");
         ImGui::SetNextWindowSize({650,360},ImGuiCond_Appearing);

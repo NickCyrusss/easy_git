@@ -88,6 +88,20 @@ ImGui 固定为 `v1.92.5`，GLFW 固定为 `3.4`，首次配置时由 CMake 下�
 
 首次提交需要已有 Git 作者配置；网络认证使用已有 Git credential helper / SSH 配置。程序不保存 Git 凭据，不弹终端密码输入；AI API Key 按上文保存到本地配置。HTTP(S) 远程操作继承启动环境中的代理变量；SSH 代理仍由 SSH 配置决定。
 
+## 按行／区块暂存与冲突编辑器
+
+- 工作区 Diff 点击增删行进行选择，支持 Ctrl 切换、Shift 范围选择；点击 **Stage lines** 或右键 **Stage selected lines** 暂存所选行，每个 `@@` 区块有 **Stage hunk**。已暂存 Diff 对应提供按行／区块取消暂存。操作只修改暂存区，预览过期时拒绝执行。二进制、符号链接、子模块及重命名使用整文件操作。
+- 点击冲突文件打开 **Resolve conflict**：上方对照 ours（索引 stage 2）与 theirs（stage 3），下方编辑结果。每个冲突区块可 **Use ours / Use theirs / Use both**，也可选择完整版本；某侧删除了文件时可 **Accept deletion**。二进制冲突支持选择完整版本。**Save and mark resolved** 保存并暂存结果，不自动提交；未清理冲突标记或文件已被外部修改时拒绝保存。编辑器支持最大 1 MiB 的普通文件；Rebase 中 ours/theirs 的含义遵循 Git 索引阶段，窗口内有说明。
+- 打开仓库窗口增加 **Open / Clone / Initialize**。Clone 目标必须是新目录或空目录；初始化可指定初始分支、保留已有文件且不自动提交。完成后自动打开仓库。
+- Local / Remote 分支右键增加 **Delete branch...**，删除本地未合并分支需明确勾选，Git 会保护正在工作树检出的分支。远端删除校验已知分支 tip，避免删除已变化的分支。
+- **Push** 或当前本地分支右键增加 **Force push with lease...**，确认源分支及远端目标后执行；需要已配置 upstream 并获取远端跟踪分支。使用明确的 `--force-with-lease` 预期提交，远端 tip 变化时拒绝覆盖。
+
+交互参考：[GitKraken 按行暂存](https://support.gitkraken.com/working-with-commits/staging/)、[冲突处理](https://help.gitkraken.com/gitkraken-desktop/branching-and-merging/)。
+
+![按行暂存](docs/partial-staging.png)
+
+![冲突编辑器](docs/conflict-editor.png)
+
 ## 验证
 
 ```sh
@@ -97,6 +111,8 @@ ctest --test-dir build --output-on-failure
 测试只在 `/tmp` 创建临时仓库。`git_workflow` 验证空仓库、中文/空格/换行路径、字面量参数、部分暂存、提交、重命名、合并图、多父提交布局、分页、Detached HEAD、Stash、本地远程推拉，以及根提交/合并提交/删除/二进制文件的文件列表和单文件 Diff。
 
 `git_operations` 验证 Cherry-pick / Merge / Revert、合并提交主线选择、三种 Reset、Stash 只读预览与未跟踪文件、恢复暂存状态、过期删除保护，以及真实冲突的继续、中止和跳过、外部 Rebase 中止、独立 Worktree 的操作状态，以及 Discard 对部分暂存、删除、重命名、特殊路径、符号链接和过期状态的处理，以及批量 Discard 的整组选中文件检查和暂存内容保留。
+
+`git_workflows` 验证按行／区块暂存与取消暂存、特殊路径与文件末尾处理、冲突结果保存、Clone／初始化、删除本地／远端分支和强制推送 lease 保护。
 
 `settings_and_ai` 使用本地回环 HTTP 模拟服务验证 JSON 请求、Bearer 认证、仅暂存区内容、中文响应、HTTP/格式错误、取消请求、暂存区变化保护，以及配置覆盖保存、各服务商配置切换与重启恢复、旧配置迁移、0600 权限与损坏配置处理；不调用付费模型。运行此测试需要允许本机监听端口。
 
@@ -123,8 +139,8 @@ xvfb-run -a -s '-screen 0 1440x900x24' \
 ## 当前边界
 
 - 当前仅支持 Linux / X11（Wayland 桌面可通过 XWayland 运行），最低窗口尺寸为 1080×720；未实现 Windows/macOS 进程后端。
-- 合并提交展示相对第一父提交的 Diff；工作区支持完整文件级暂存，尚无按行/区块暂存、冲突编辑器、交互式 Rebase 或拖拽提交。
-- 仓库、当前仓库、主题和 AI 设置持久化；提交草稿、文件选择和面板布局仅保留在当前会话，退出后不恢复；外部修改需手动刷新。未实现 Clone、仓库初始化、删除分支及强制推送。
+- 合并提交展示相对第一父提交的 Diff；工作区支持整文件及按行/区块暂存；尚无交互式 Rebase 编辑器或拖拽提交。二进制冲突仅支持选用完整版本，符号链接和子模块冲突需在外部处理。
+- 仓库、当前仓库、主题和 AI 设置持久化；提交草稿、文件选择和面板布局仅保留在当前会话，退出后不恢复；外部修改需手动刷新。Clone、初始化、删除分支及带 lease 的强制推送已提供界面入口。
 - 单次 Git 命令超时 120 秒，输出预览上限 8 MiB。超限时明确报错，不显示不完整的仓库结构。
 - 远程操作已使用本地远程仓库验证；AI 请求使用本地模拟接口验证，尚未使用用户的 API Key 调用真实服务商。
 

@@ -12,8 +12,8 @@ Easy Git takes inspiration from GitKraken's three-panel interface. It is an inde
 
 - **Multiple repositories:** browse folders, open and reorder repository tabs, and restore open repositories on startup. Each tab keeps its own draft, selection, and view state during the session.
 - **Commit graph:** inspect branches, merges, commit details, and changed files. Clicking a local or remote branch scrolls to its tip, loading additional history when necessary.
-- **File workflow:** separate Unstaged and Staged panels, Path and Tree views, filtering, inline diffs with line numbers, Ctrl/Shift selection, batch staging, unstaging, and confirmed discard.
-- **Git operations:** commit, create and switch branches, create tags, fetch, fast-forward-only pull, push, cherry-pick, merge, revert, and soft/mixed/hard reset.
+- **File workflow:** separate Unstaged and Staged panels, Path and Tree views, filtering, inline diffs with line numbers, Ctrl/Shift selection, file/line/hunk staging and unstaging, and confirmed discard.
+- **Git operations:** commit, create and switch branches, create tags, fetch, fast-forward-only pull, push, cherry-pick, merge, revert, soft/mixed/hard reset, clone, initialization, branch deletion, and force push with an explicit lease.
 - **Stash:** save tracked and untracked changes; click to preview, then use the context menu to apply or delete. Conflict operations expose Continue, Abort, and Skip where supported.
 - **Appearance:** light and dark themes, resizable panels, and collapsible Local, Remote, Tags, and Stash sections.
 - **Optional AI:** generate an editable commit draft from staged changes using DeepSeek, Kimi, Qwen, Doubao, or a custom Chat Completions compatible endpoint. Each provider keeps its own settings.
@@ -59,11 +59,27 @@ No proxy is required by default. If your network needs one for dependency downlo
 
 **Hard reset** requires an extra confirmation because it overwrites the index and working tree and can remove untracked paths that obstruct checkout. Soft reset keeps staged and working changes; mixed reset resets the index but keeps working files.
 
-Clicking a **Stash** only previews its files and diffs. **Apply** retains the stash and can restore the index; **Delete** asks for confirmation and rejects stale list positions. Resolve conflicts externally, stage the resolution, and use **Continue** when an operation is in progress. Stash-apply conflicts follow the normal stage-and-commit workflow.
+Clicking a **Stash** only previews its files and diffs. **Apply** retains the stash and can restore the index; **Delete** asks for confirmation and rejects stale list positions. Click a conflicted file to open the built-in editor, save its resolution, and use **Continue** when an operation is in progress. Stash-apply conflicts follow the normal stage-and-commit workflow.
 
 ![Git operation menu](docs/git-operations.png)
 
 ![Stash preview](docs/stash-preview.png)
+
+## Partial staging and conflict resolution
+
+In a working-tree diff, click changed lines to select them, use Ctrl/Shift to adjust the selection, then click **Stage lines** or right-click **Stage selected lines**. Each `@@` header has a **Stage hunk** button. In the staged diff, the same controls **unstage** lines or hunks. These operations change only the index and reject stale previews. Binary files, symlinks, submodules, and renames use whole-file operations.
+
+Click a conflicted file to open **Resolve conflict**. The upper panels show ours (index stage 2) and theirs (stage 3); the lower result can be edited directly. Choose **Use ours**, **Use theirs**, or **Use both** for each conflict block, or choose an entire version. A missing version offers **Accept deletion**; binary conflicts support entire-version selection only. **Save and mark resolved** writes and stages the result without committing. Unresolved markers or externally changed files prevent saving. The editor supports regular files up to 1 MiB. During rebase, ours/theirs follow Git's stage semantics, as explained in the dialog.
+
+Use the **Open / Clone / Initialize** choices in the repository dialog to open, clone into a new or empty folder, or initialize a folder with an initial branch name. Clone and initialization open the resulting repository automatically; initialization leaves existing files uncommitted.
+
+Right-click a local or remote branch and choose **Delete branch...**. Local deletion checks whether the branch is merged; an explicit checkbox permits unmerged deletion, while checked-out branches remain protected by Git. Remote deletion checks the remote tip before deleting it. Right-click **Push** or the current local branch for **Force push with lease...**; review the source/target and confirm. An upstream and fetched tracking reference are required. The recorded lease refuses to overwrite a remote tip that changed after it was observed.
+
+Interaction references: [GitKraken partial staging](https://support.gitkraken.com/working-with-commits/staging/) and [merge conflict workflow](https://help.gitkraken.com/gitkraken-desktop/branching-and-merging/).
+
+![Partial staging](docs/partial-staging.png)
+
+![Conflict editor](docs/conflict-editor.png)
 
 ## Themes, AI, and saved settings
 
@@ -102,6 +118,7 @@ Tests create disposable repositories under `/tmp`:
 | --- | --- |
 | `git_workflow` | Status, unusual paths, staging, commits, commit graphs, pagination, file diffs, stash, and local remote operations |
 | `git_operations` | Cherry-pick, merge, revert, reset modes, stash handling, conflict continuation/abort/skip, and discard protections |
+| `git_workflows` | Partial staging/unstaging, conflict resolution, clone/init, local/remote branch deletion, and force-push lease rejection |
 | `settings_and_ai` | Configuration replacement and permissions, provider switching and restart recovery, legacy migration, mock HTTP requests, cancellation, error handling, and stale-index protection |
 | `repository_tabs` | Headless ImGui interactions, independent tabs and drafts, branch navigation, file selections, batch operations, settings Save/Cancel, and restart recovery |
 
@@ -128,8 +145,8 @@ Screenshots in `docs/` come from the running application with temporary demonstr
 ## Current limitations
 
 - Linux/X11 only; Wayland desktops require XWayland. The minimum window size is 1080×720. Windows and macOS process backends are not implemented.
-- File-level staging only. No line/hunk staging, conflict editor, interactive rebase, or commit drag-and-drop. Existing externally started rebases can be continued or aborted.
-- No clone, repository initialization, branch deletion, or force-push UI.
+- No interactive rebase editor or commit drag-and-drop. Existing externally started rebases can be continued or aborted.
+- Partial staging and conflict editing operate on regular text files; binary conflict resolution is whole-version only. Symlinks/submodules and renamed files require whole-file or external operations.
 - Merge diffs use the first parent. History loads in batches of 300; search covers loaded commits only, and graph edges are hidden while filtering.
 - Commit drafts, file selections, and panel layout last only for the current session. External changes require a refresh.
 - Git commands have a 120-second timeout and an 8 MiB output limit. Exceeding either reports an error rather than presenting incomplete results.

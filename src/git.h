@@ -37,6 +37,11 @@ struct Snapshot {
 };
 struct Segment { int from, to, color; bool incoming; };
 struct GraphRow { int lane = 0, width = 1; std::vector<Segment> segments; };
+struct Conflict {
+    std::string path, stages, base, ours, theirs, working;
+    bool has_ours = false, has_theirs = false, exists = false, binary = false;
+};
+struct PushTarget { std::string remote, ref, expected, local, branch; };
 
 std::vector<File> parse_status(const std::string& bytes);
 std::vector<Commit> parse_log(const std::string& bytes);
@@ -70,6 +75,14 @@ public:
     void discard(const File& file) const;
     void discard_files(const std::vector<File>& files) const;
     void commit(const std::string& message) const;
+    void stage_lines(const File& file, bool unstage, const std::string& preview, const std::vector<int>& lines) const;
+    Conflict read_conflict(const File& file) const;
+    void save_resolution(const Conflict& conflict, const std::string& result, bool remove = false) const;
+    static void clone(const std::string& url, const std::string& destination, std::shared_ptr<std::atomic_bool> cancel = {});
+    static void initialize(const std::string& destination, const std::string& branch);
+    void delete_branch(const Ref& ref, bool force = false) const;
+    PushTarget push_target() const;
+    void force_push(const PushTarget& target) const;
 private:
     void require_idle() const;
     std::string root_;
