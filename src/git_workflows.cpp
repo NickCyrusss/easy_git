@@ -53,6 +53,45 @@ struct Entry { std::string mode, oid; };
 Entry index_entry(const std::string& listing) {
     Entry e; std::istringstream stream(listing); stream >> e.mode >> e.oid; return e;
 }
+std::string selected_content(const std::string& baseline,const std::string& preview,const std::vector<int>& selected,bool reverse) {
+    auto original = lines(baseline), patch = lines(preview);
+    std::set<int> selection(selected.begin(),selected.end());
+    if (selection.empty()) throw std::runtime_error("Select added or removed lines.");
+    std::string result; size_t cursor = 0; bool hunk = false; int used = 0;
+    auto append = [&](const std::string& line) {
+        if (!result.empty() && result.back() != '\n' && !line.empty())
+            throw std::runtime_error("This selection joins lines without a final newline. Select the complete replacement hunk.");
+        result += line;
+    };
+    for (int i = 0; i < int(patch.size()); ++i) {
+        auto row = patch[i];
+        if (row.rfind("@@ ",0) == 0) {
+            int start = 0, count = 1; auto offset = reverse ? row.find(" +") : row.find(" -");
+            if (offset == std::string::npos || sscanf(row.c_str()+offset+2,"%d,%d",&start,&count) < 1)
+                throw std::runtime_error("Invalid diff hunk.");
+            size_t position = size_t(count == 0 ? start : start-1);
+            if (position < cursor || position > original.size()) throw std::runtime_error("Diff does not match the file.");
+            while (cursor < position) append(original[cursor++]);
+            hunk = true; continue;
+        }
+        if (!hunk || row.empty() || row[0] == '\\') continue;
+        char sign = row[0]; if (sign != ' ' && sign != '+' && sign != '-') { hunk = false; continue; }
+        std::string content = row.substr(1);
+        if (i+1 < int(patch.size()) && patch[i+1].rfind("\\ No newline",0) == 0 && !content.empty() && content.back() == '\n') content.pop_back();
+        bool chosen = selection.count(i) && sign != ' ';
+        if (chosen) ++used;
+        char action = reverse ? (sign == '+' ? '-' : sign == '-' ? '+' : ' ') : sign;
+        if (action == '+') { if (chosen) append(content); }
+        else {
+            if (cursor >= original.size() || original[cursor] != content) throw std::runtime_error("Diff content no longer matches the file.");
+            if (action == ' ' || !chosen) append(original[cursor]);
+            ++cursor;
+        }
+    }
+    if (used != int(selection.size())) throw std::runtime_error("Select only changed text lines inside a diff hunk.");
+    while (cursor < original.size()) append(original[cursor++]);
+    return result;
+}
 std::pair<std::string,std::string> remote_branch(const Git& git,const Ref& ref) {
     auto name = ref.full.substr(std::string("refs/remotes/").size());
     std::istringstream names(git.checked({"remote"})); std::string best;
@@ -72,42 +111,7 @@ void Git::stage_lines(const File& file,bool unstage,const std::string& preview,c
     auto baseline = entry.oid.empty() ? std::string() : checked({"cat-file","blob",entry.oid});
     if (baseline.find('\0') != std::string::npos || preview.find("GIT binary patch") != std::string::npos)
         throw std::runtime_error("Stage binary files as a whole file.");
-    auto original = lines(baseline), patch = lines(preview);
-    std::set<int> selection(selected.begin(),selected.end());
-    if (selection.empty()) throw std::runtime_error("Select added or removed lines.");
-    std::string result; size_t cursor = 0; bool hunk = false; int used = 0;
-    auto append = [&](const std::string& line) {
-        if (!result.empty() && result.back() != '\n' && !line.empty())
-            throw std::runtime_error("This selection joins lines without a final newline. Select the complete replacement hunk.");
-        result += line;
-    };
-    for (int i = 0; i < int(patch.size()); ++i) {
-        auto row = patch[i];
-        if (row.rfind("@@ ",0) == 0) {
-            int start = 0, count = 1; auto offset = unstage ? row.find(" +") : row.find(" -");
-            if (offset == std::string::npos || sscanf(row.c_str()+offset+2,"%d,%d",&start,&count) < 1)
-                throw std::runtime_error("Invalid diff hunk.");
-            size_t position = size_t(count == 0 ? start : start-1);
-            if (position < cursor || position > original.size()) throw std::runtime_error("Diff does not match the index.");
-            while (cursor < position) append(original[cursor++]);
-            hunk = true; continue;
-        }
-        if (!hunk || row.empty() || row[0] == '\\') continue;
-        char sign = row[0]; if (sign != ' ' && sign != '+' && sign != '-') { hunk = false; continue; }
-        std::string content = row.substr(1);
-        if (i+1 < int(patch.size()) && patch[i+1].rfind("\\ No newline",0) == 0 && !content.empty() && content.back() == '\n') content.pop_back();
-        bool chosen = selection.count(i) && sign != ' ';
-        if (chosen) ++used;
-        char action = unstage ? (sign == '+' ? '-' : sign == '-' ? '+' : ' ') : sign;
-        if (action == '+') { if (chosen) append(content); }
-        else {
-            if (cursor >= original.size() || original[cursor] != content) throw std::runtime_error("Diff content no longer matches the index.");
-            if (action == ' ' || !chosen) append(original[cursor]);
-            ++cursor;
-        }
-    }
-    if (used != int(selection.size())) throw std::runtime_error("Select only changed text lines inside a diff hunk.");
-    while (cursor < original.size()) append(original[cursor++]);
+    auto result = selected_content(baseline,preview,selected,unstage);
     if (entry.mode.empty()) {
         if (unstage) {
             auto tree = checked({"ls-tree","-z","HEAD","--",file.path});
@@ -121,6 +125,38 @@ void Git::stage_lines(const File& file,bool unstage,const std::string& preview,c
         throw std::runtime_error("File or index changed. Refresh and select lines again.");
     if (remove) checked({"update-index","--force-remove","--",file.path});
     else checked({"update-index","--add","--cacheinfo",entry.mode,oid,file.path});
+}
+void Git::discard_lines(const File& file,const std::string& preview,const std::vector<int>& selected) const {
+    if (!file.unstaged() || file.conflicted() || !file.original.empty())
+        throw std::runtime_error("Discard lines requires an unstaged regular file without conflicts or renames.");
+    auto path = regular_path(root_,file.path);
+    auto signature = checked({"ls-files","--stage","-z","--",file.path});
+    auto entry = index_entry(signature);
+    if (!entry.mode.empty() && entry.mode != "100644" && entry.mode != "100755")
+        throw std::runtime_error("Discard lines requires a regular text file.");
+    const bool exists = fs::exists(path);
+    auto original = exists ? read_file(path) : std::string();
+    if (original.find('\0') != std::string::npos || preview.find("GIT binary patch") != std::string::npos)
+        throw std::runtime_error("Discard binary files as a whole file.");
+    if (diff(file,false) != preview) throw std::runtime_error("The diff changed. Review the file before discarding lines.");
+    auto result = selected_content(original,preview,selected,true);
+    if (result.size() > 1024*1024) throw std::runtime_error("Partial discard supports files up to 1 MiB.");
+    const bool remove = result.empty() && file.index == '?';
+    auto unchanged = [&] {
+        regular_path(root_,file.path);
+        if (fs::exists(path) != exists || (exists && read_file(path) != original) ||
+            checked({"ls-files","--stage","-z","--",file.path}) != signature || diff(file,false) != preview)
+            throw std::runtime_error("File or index changed. Review the selection before discarding it.");
+    };
+    if (remove) { unchanged(); fs::remove(path); }
+    else {
+        fs::create_directories(path.parent_path());
+        TempFile temp(result,(path.parent_path()/".easy-git-discard-XXXXXX").string());
+        auto permissions = exists ? fs::status(path).permissions() : fs::perms::owner_read | fs::perms::owner_write | fs::perms::group_read | fs::perms::others_read;
+        if (!exists && entry.mode == "100755") permissions |= fs::perms::owner_exec | fs::perms::group_exec | fs::perms::others_exec;
+        fs::permissions(temp.path,permissions);
+        unchanged(); fs::rename(temp.path,path);
+    }
 }
 Conflict Git::read_conflict(const File& file) const {
     Conflict c; c.path = file.path;

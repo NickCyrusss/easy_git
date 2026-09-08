@@ -158,6 +158,8 @@ struct RepoTab {
     std::array<std::string, 3> selection_anchor;
     std::array<std::vector<int>, 3> visible_files;
     std::vector<eg::File> pending_files;
+    std::string pending_diff;
+    std::vector<int> pending_diff_lines;
     bool previewing = false;
     int queued_preview_kind = -1;
     eg::File queued_preview;
@@ -785,13 +787,21 @@ struct RepoTab {
             git.stage_lines(file,unstage,patch,selection);
         });
     }
-    void stage_hunk(int header) {
+    std::vector<int> hunk_lines(int header) const {
         std::vector<int> selected;
         for (int i = header+1; i < int(detail_lines.size()); ++i) {
             if (detail_lines[i].text.rfind("@@",0) == 0 || detail_lines[i].text.rfind("diff ",0) == 0) break;
             if (changed_line(i)) selected.push_back(i);
         }
-        stage_diff_lines(std::move(selected));
+        return selected;
+    }
+    void stage_hunk(int header) { stage_diff_lines(hunk_lines(header)); }
+    void request_discard_lines(std::vector<int> selection,bool hunk = false) {
+        if (!partial_available() || selected_staged || selection.empty()) return;
+        auto found = std::find_if(repo.files.begin(),repo.files.end(),[&](const auto& f) { return f.path == selected_file; });
+        if (found == repo.files.end()) return;
+        pending_files = {*found}; pending_diff = detail; pending_diff_lines = std::move(selection);
+        pending_kind = hunk ? "discard hunk" : "discard lines";
     }
     void set_resolution(const std::string& text) {
         resolution.assign(1024*1024+1,0);
@@ -906,8 +916,12 @@ struct RepoTab {
                 draw->AddText({p.x+103,p.y+3},ImGui::GetColorU32(color),line.c_str());
                 ImGui::PushID(i);
                 if (partial_available() && line.rfind("@@ ",0) == 0) {
-                    ImGui::SetCursorScreenPos({p.x+std::max(0.0f,ImGui::GetContentRegionAvail().x-114),p.y});
+                    ImGui::SetCursorScreenPos({p.x+std::max(0.0f,ImGui::GetContentRegionAvail().x-(selected_staged ? 114 : 232)),p.y});
                     if (button(selected_staged ? "Unstage hunk" : "Stage hunk",true,{114,h})) stage_hunk(i);
+                    if (!selected_staged) {
+                        ImGui::SameLine(0,4);
+                        if (button("Discard hunk",!busy(),{114,h})) request_discard_lines(hunk_lines(i),true);
+                    }
                     ImGui::SetCursorScreenPos({p.x,p.y+h});
                 } else if (partial_available() && changed_line(i)) {
                     if (ImGui::InvisibleButton("line",{width,h})) pick_line(i,ImGui::GetIO().KeyCtrl,ImGui::GetIO().KeyShift);
@@ -915,6 +929,7 @@ struct RepoTab {
                     if (ImGui::BeginPopupContextItem()) {
                         if (!selected_lines.count(i)) pick_line(i,false,false);
                         if (ImGui::MenuItem(selected_staged ? "Unstage selected lines" : "Stage selected lines")) stage_diff_lines({selected_lines.begin(),selected_lines.end()});
+                        if (!selected_staged && ImGui::MenuItem("Discard selected lines...")) request_discard_lines({selected_lines.begin(),selected_lines.end()});
                         ImGui::EndPopup();
                     }
                 } else ImGui::Dummy({width,h});
@@ -935,6 +950,10 @@ struct RepoTab {
         if (workspace) {
             if (button(selected_staged ? "Unstage lines" : "Stage lines",partial_available() && !selected_lines.empty()))
                 stage_diff_lines({selected_lines.begin(),selected_lines.end()});
+            if (!selected_staged) {
+                ImGui::SameLine();
+                if (button("Discard lines",partial_available() && !selected_lines.empty())) request_discard_lines({selected_lines.begin(),selected_lines.end()});
+            }
             ImGui::SameLine(); ImGui::TextColored(muted,"%zu selected",selected_lines.size());
         }
         ImGui::Separator();
@@ -1189,6 +1208,14 @@ struct RepoTab {
             ImGui::TextWrapped("Delete %s at %s?",pending_branch.full.c_str(),pending_branch.id.substr(0,12).c_str());
             if (pending_branch.full.rfind("refs/heads/",0) == 0) ImGui::Checkbox("Allow deleting an unmerged branch",&hard_confirm);
             else ImGui::TextWrapped("This deletes the branch on the remote server. A changed remote tip will cause rejection.");
+        } else if (pending_kind == "discard lines" || pending_kind == "discard hunk") {
+            ImGui::TextWrapped("Discard %zu changed lines in %s?",pending_diff_lines.size(),visible_path(pending_files.front().path).c_str());
+            ImGui::BeginChild("discard_selection",{0,180},ImGuiChildFlags_Borders,ImGuiWindowFlags_HorizontalScrollbar);
+            std::istringstream patch(pending_diff); std::set<int> chosen(pending_diff_lines.begin(),pending_diff_lines.end());
+            int i = 0;
+            for (std::string line; std::getline(patch,line); ++i) if (chosen.count(i)) ImGui::TextUnformatted(line.c_str());
+            ImGui::EndChild();
+            ImGui::TextWrapped("Only these unstaged edits will be discarded. Staged changes and other lines are kept. Discard cannot be undone here.");
         } else if (pending_kind == "discard files") {
             ImGui::Text("Discard unstaged changes in %zu files?",pending_files.size());
             ImGui::BeginChild("discard_files",{0,std::min(160.0f,28.0f*pending_files.size()+10)},ImGuiChildFlags_Borders);
@@ -1238,7 +1265,8 @@ struct RepoTab {
             auto kind = pending_kind; auto commit = pending_commit; auto saved = pending_stash;
             auto files = pending_files; auto branch = pending_branch; auto push = pending_push; bool force = hard_confirm;
             auto operation = pending_operation; int parent = mainline, mode = reset_mode; bool index = restore_index;
-            mutate(kind,[kind,commit,saved,operation,parent,mode,index,files,branch,push,force](const eg::Git& git) {
+            auto patch = pending_diff; auto lines = pending_diff_lines;
+            mutate(kind,[kind,commit,saved,operation,parent,mode,index,files,branch,push,force,patch,lines](const eg::Git& git) {
                 if (kind == "delete branch") git.delete_branch(branch,force);
                 else if (kind == "force push") git.force_push(push);
                 else if (kind == "cherry-pick") git.cherry_pick(commit,parent);
@@ -1248,6 +1276,7 @@ struct RepoTab {
                 else if (kind == "apply stash") git.apply_stash(saved,index);
                 else if (kind == "delete stash") git.delete_stash(saved);
                 else if (kind == "discard files") git.discard_files(files);
+                else if (kind == "discard lines" || kind == "discard hunk") git.discard_lines(files.at(0),patch,lines);
                 else git.resolve_operation(operation,kind);
             });
             pending_kind.clear(); ImGui::CloseCurrentPopup();

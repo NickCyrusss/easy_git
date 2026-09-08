@@ -91,9 +91,10 @@ ImGui 固定为 `v1.92.5`，GLFW 固定为 `3.4`，首次配置时由 CMake 下�
 
 首次提交需要已有 Git 作者配置；网络认证使用已有 Git credential helper / SSH 配置。程序不保存 Git 凭据，不弹终端密码输入；AI API Key 按上文保存到本地配置。HTTP(S) 远程操作继承启动环境中的代理变量；SSH 代理仍由 SSH 配置决定。
 
-## 按行／区块暂存与冲突编辑器
+## 按行／区块暂存、丢弃与冲突编辑器
 
-- 工作区 Diff 点击增删行进行选择，支持 Ctrl 切换、Shift 范围选择；点击 **Stage lines** 或右键 **Stage selected lines** 暂存所选行，每个 `@@` 区块有 **Stage hunk**。已暂存 Diff 对应提供按行／区块取消暂存。操作只修改暂存区，预览过期时拒绝执行。二进制、符号链接、子模块及重命名使用整文件操作。
+- 工作区 Diff 点击增删行进行选择，支持 Ctrl 切换、Shift 范围选择；点击 **Stage lines** 或右键 **Stage selected lines** 暂存所选行，每个 `@@` 区块有 **Stage hunk**。从 **Staged Files** 打开已暂存 Diff，可点击 **Unstage lines** 或 **Unstage hunk** 按行／区块取消暂存。操作只修改暂存区，预览过期时拒绝执行。二进制、符号链接、子模块及重命名使用整文件操作。
+- 从 **Unstaged Files** 打开 Diff，选中增删行后点击 **Discard lines** 或右键 **Discard selected lines...**；也可点击 `@@` 旁的 **Discard hunk**。确认框列出将丢弃的行，仅撤销所选未暂存改动，保留暂存内容和其他改动；预览变化时拒绝执行。支持最大 1 MiB 的普通文本文件；丢弃未跟踪文件的所有行会删除该文件，丢弃后无法在应用中撤销。
 - 点击冲突文件打开 **Resolve conflict**：上方对照 ours（索引 stage 2）与 theirs（stage 3），下方编辑结果。每个冲突区块可 **Use ours / Use theirs / Use both**，也可选择完整版本；某侧删除了文件时可 **Accept deletion**。二进制冲突支持选择完整版本。**Save and mark resolved** 保存并暂存结果，不自动提交；未清理冲突标记或文件已被外部修改时拒绝保存。编辑器支持最大 1 MiB 的普通文件；Rebase 中 ours/theirs 的含义遵循 Git 索引阶段，窗口内有说明。
 - 打开仓库窗口增加 **Open / Clone / Initialize**。Clone 目标必须是新目录或空目录；初始化可指定初始分支、保留已有文件且不自动提交。完成后自动打开仓库。
 - Local / Remote 分支右键增加 **Delete branch...**，删除本地未合并分支需明确勾选，Git 会保护正在工作树检出的分支。远端删除校验已知分支 tip，避免删除已变化的分支。
@@ -101,7 +102,9 @@ ImGui 固定为 `v1.92.5`，GLFW 固定为 `3.4`，首次配置时由 CMake 下�
 
 交互参考：[GitKraken 按行暂存](https://support.gitkraken.com/working-with-commits/staging/)、[冲突处理](https://help.gitkraken.com/gitkraken-desktop/branching-and-merging/)。
 
-![按行暂存](docs/partial-staging.png)
+![按行暂存与丢弃](docs/partial-staging.png)
+
+![丢弃区块确认](docs/discard-hunk.png)
 
 ![冲突编辑器](docs/conflict-editor.png)
 
@@ -115,11 +118,11 @@ ctest --test-dir build --output-on-failure
 
 `git_operations` 验证 Cherry-pick / Merge / Revert、合并提交主线选择、三种 Reset、Stash 只读预览与未跟踪文件、恢复暂存状态、过期删除保护，以及真实冲突的继续、中止和跳过、外部 Rebase 中止、独立 Worktree 的操作状态，以及 Discard 对部分暂存、删除、重命名、特殊路径、符号链接和过期状态的处理，以及批量 Discard 的整组选中文件检查和暂存内容保留。
 
-`git_workflows` 验证按行／区块暂存与取消暂存、特殊路径与文件末尾处理、冲突结果保存、Clone／初始化、删除本地／远端分支和强制推送 lease 保护。
+`git_workflows` 验证按行／区块暂存、取消暂存及丢弃、选区隔离与过期预览拒绝、特殊路径与文件末尾处理、冲突结果保存、Clone／初始化、删除本地／远端分支和强制推送 lease 保护。
 
 `settings_and_ai` 使用本地回环 HTTP 模拟服务验证 OpenAI / Anthropic 两种 JSON 请求、对应认证头和响应解析、仅暂存区内容、中文响应、HTTP/格式错误、取消请求、暂存区变化保护，以及配置覆盖保存、各服务商配置切换与重启恢复、旧配置迁移、自定义模型增删与预设删除保护、窗口尺寸读写与非法值校验、0600 权限与损坏配置处理；不调用付费模型。运行此测试需要允许本机监听端口。
 
-`repository_tabs` 使用真实 ImGui 状态（无需 X 服务）验证标签点击、独立草稿与文件选择、切换期间的后台 Diff/暂存、相同根目录去重、关闭保护、文件树及 Diff 行号，以及 Stash / Discard 的仓库隔离、分支跨分页定位和提交图滚动、Ctrl / Shift / Ctrl+Shift 多选、连续点击的 Diff 更新、Tree 可见范围、筛选及批量暂存/取消暂存/丢弃、主题/模型配置与仓库重启恢复、自定义模型增删的保存与取消、AI 失败保留草稿。
+`repository_tabs` 使用真实 ImGui 状态（无需 X 服务）验证标签点击、独立草稿与文件选择、切换期间的后台 Diff/暂存、相同根目录去重、关闭保护、文件树及 Diff 行号，以及 Stash / Discard 的仓库隔离、分支跨分页定位和提交图滚动、Ctrl / Shift / Ctrl+Shift 多选、连续点击的 Diff 更新、Tree 可见范围、筛选及批量暂存/取消暂存/丢弃、主题/模型配置与仓库重启恢复、自定义模型增删的保存与取消、区块取消暂存和丢弃确认／取消、AI 失败保留草稿。
 
 无需图形依赖也可单独测试 Git 后端：
 
@@ -137,12 +140,12 @@ xvfb-run -a -s '-screen 0 1440x900x24' \
   --frames 30 --screenshot /tmp/easy-git.ppm
 ```
 
-`docs/` 的截图来自真实临时测试仓库。新版界面已用实际鼠标、键盘检查多仓库切换、草稿保留、单文件暂存、提交文件列表与 Diff、Path / Tree 切换及 1080×720 布局。Git 操作界面另验证了 Local / Remote / Stash 折叠、Stash 预览与 Apply / Delete、Cherry-pick 和 Hard Reset 的勾选保护及执行。新增分支定位检查使用 341 个提交验证跨页跳转及 Remote 定位；Discard 检查验证取消、确认及保留暂存内容；另用真实 Ctrl / Shift 按键和鼠标验证多选、Tree 折叠范围、批量暂存/丢弃及窄窗口工具栏。主题/AI 界面已验证中文生成结果填入、浅色与深色切换、设置编辑保存和重启后当前仓库恢复。窗口尺寸另经 Xvfb 实测：调整为 1220 × 780 后自动保存宽高，重启恢复相同尺寸；不保存窗口位置或分栏布局。
+`docs/` 的截图来自真实临时测试仓库。按区块操作已用真实鼠标验证：暂存一个区块、确认丢弃另一区块并保留暂存内容，再取消暂存第一个区块并保留工作区改动。新版界面已用实际鼠标、键盘检查多仓库切换、草稿保留、单文件暂存、提交文件列表与 Diff、Path / Tree 切换及 1080×720 布局。Git 操作界面另验证了 Local / Remote / Stash 折叠、Stash 预览与 Apply / Delete、Cherry-pick 和 Hard Reset 的勾选保护及执行。新增分支定位检查使用 341 个提交验证跨页跳转及 Remote 定位；Discard 检查验证取消、确认及保留暂存内容；另用真实 Ctrl / Shift 按键和鼠标验证多选、Tree 折叠范围、批量暂存/丢弃及窄窗口工具栏。主题/AI 界面已验证中文生成结果填入、浅色与深色切换、设置编辑保存和重启后当前仓库恢复。窗口尺寸另经 Xvfb 实测：调整为 1220 × 780 后自动保存宽高，重启恢复相同尺寸；不保存窗口位置或分栏布局。
 
 ## 当前边界
 
 - 当前仅支持 Linux / X11（Wayland 桌面可通过 XWayland 运行），最低窗口尺寸为 1080×720；未实现 Windows/macOS 进程后端。
-- 合并提交展示相对第一父提交的 Diff；工作区支持整文件及按行/区块暂存；尚无交互式 Rebase 编辑器或拖拽提交。二进制冲突仅支持选用完整版本，符号链接和子模块冲突需在外部处理。
+- 合并提交展示相对第一父提交的 Diff；工作区支持整文件及按行／区块暂存、取消暂存和丢弃；尚无交互式 Rebase 编辑器或拖拽提交。二进制冲突仅支持选用完整版本，符号链接和子模块冲突需在外部处理。
 - 窗口尺寸、仓库、当前仓库、主题和 AI 设置持久化；提交草稿、文件选择和面板布局仅保留在当前会话，退出后不恢复；外部修改需手动刷新。Clone、初始化、删除分支及带 lease 的强制推送已提供界面入口。
 - 单次 Git 命令超时 120 秒，输出预览上限 8 MiB。超限时明确报错，不显示不完整的仓库结构。
 - 远程操作已使用本地远程仓库验证；AI 请求使用本地模拟接口验证，尚未使用用户的 API Key 调用真实服务商。

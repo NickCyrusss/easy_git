@@ -12,7 +12,7 @@ Easy Git takes inspiration from GitKraken's three-panel interface. It is an inde
 
 - **Multiple repositories:** browse folders, open and reorder repository tabs, and restore open repositories on startup. Each tab keeps its own draft, selection, and view state during the session.
 - **Commit graph:** inspect branches, merges, commit details, and changed files. Clicking a local or remote branch scrolls to its tip, loading additional history when necessary.
-- **File workflow:** separate Unstaged and Staged panels, Path and Tree views, filtering, inline diffs with line numbers, Ctrl/Shift selection, file/line/hunk staging and unstaging, and confirmed discard.
+- **File workflow:** separate Unstaged and Staged panels, Path and Tree views, filtering, inline diffs with line numbers, Ctrl/Shift selection, file/line/hunk staging, unstaging, and confirmed discard.
 - **Git operations:** commit, create and switch branches, create tags, fetch, fast-forward-only pull, push, cherry-pick, merge, revert, soft/mixed/hard reset, clone, initialization, branch deletion, and force push with an explicit lease.
 - **Stash:** save tracked and untracked changes; click to preview, then use the context menu to apply or delete. Conflict operations expose Continue, Abort, and Skip where supported.
 - **Appearance:** light and dark themes, automatic window-size restoration, resizable panels, and collapsible Local, Remote, Tags, and Stash sections.
@@ -65,9 +65,11 @@ Clicking a **Stash** only previews its files and diffs. **Apply** retains the st
 
 ![Stash preview](docs/stash-preview.png)
 
-## Partial staging and conflict resolution
+## Partial staging, discard, and conflict resolution
 
-In a working-tree diff, click changed lines to select them, use Ctrl/Shift to adjust the selection, then click **Stage lines** or right-click **Stage selected lines**. Each `@@` header has a **Stage hunk** button. In the staged diff, the same controls **unstage** lines or hunks. These operations change only the index and reject stale previews. Binary files, symlinks, submodules, and renames use whole-file operations.
+In a working-tree diff, click changed lines to select them, use Ctrl/Shift to adjust the selection, then click **Stage lines** or right-click **Stage selected lines**. Each `@@` header has a **Stage hunk** button. Open a file from **Staged Files** to use **Unstage lines** or **Unstage hunk**. Stage/Unstage changes only the index and rejects stale previews. Binary files, symlinks, submodules, and renames use whole-file operations.
+
+Open a file from **Unstaged Files** to select changed lines and click **Discard lines** (also available in the right-click menu), or use **Discard hunk** beside a `@@` header. Confirmation lists the selected lines. Discard reverses only those working-tree edits, preserves staged content and other changes, and rejects a changed preview. Partial discard supports regular text files up to 1 MiB; discarding all lines of an untracked file removes it. Discarded edits cannot be undone in the app.
 
 Click a conflicted file to open **Resolve conflict**. The upper panels show ours (index stage 2) and theirs (stage 3); the lower result can be edited directly. Choose **Use ours**, **Use theirs**, or **Use both** for each conflict block, or choose an entire version. A missing version offers **Accept deletion**; binary conflicts support entire-version selection only. **Save and mark resolved** writes and stages the result without committing. Unresolved markers or externally changed files prevent saving. The editor supports regular files up to 1 MiB. During rebase, ours/theirs follow Git's stage semantics, as explained in the dialog.
 
@@ -77,7 +79,9 @@ Right-click a local or remote branch and choose **Delete branch...**. Local dele
 
 Interaction references: [GitKraken partial staging](https://support.gitkraken.com/working-with-commits/staging/) and [merge conflict workflow](https://help.gitkraken.com/gitkraken-desktop/branching-and-merging/).
 
-![Partial staging](docs/partial-staging.png)
+![Partial staging and discard](docs/partial-staging.png)
+
+![Discard hunk confirmation](docs/discard-hunk.png)
 
 ![Conflict editor](docs/conflict-editor.png)
 
@@ -120,9 +124,9 @@ Tests create disposable repositories under `/tmp`:
 | --- | --- |
 | `git_workflow` | Status, unusual paths, staging, commits, commit graphs, pagination, file diffs, stash, and local remote operations |
 | `git_operations` | Cherry-pick, merge, revert, reset modes, stash handling, conflict continuation/abort/skip, and discard protections |
-| `git_workflows` | Partial staging/unstaging, conflict resolution, clone/init, local/remote branch deletion, and force-push lease rejection |
+| `git_workflows` | Partial staging/unstaging/discard, selection isolation and stale-preview rejection, conflict resolution, clone/init, local/remote branch deletion, and force-push lease rejection |
 | `settings_and_ai` | Configuration replacement and permissions, window-size round trips and validation, per-model settings and migration, custom model add/delete protection, OpenAI/Anthropic HTTP requests and responses, cancellation, and stale-index protection |
-| `repository_tabs` | Headless ImGui interactions, independent tabs and drafts, branch navigation, file selections, batch operations, settings Save/Cancel including model add/delete, and restart recovery |
+| `repository_tabs` | Headless ImGui interactions, independent tabs and drafts, branch navigation, file selections, batch operations, settings Save/Cancel including model add/delete, partial unstage and discard confirmation/cancellation, and restart recovery |
 
 AI tests use a local loopback HTTP server and require permission to listen on a local port. They do not call paid providers. Actual provider calls require your own API key and have not been validated by these tests.
 
@@ -142,13 +146,13 @@ xvfb-run -a -s '-screen 0 1440x900x24' \
   --frames 30 --screenshot /tmp/easy-git.ppm
 ```
 
-Screenshots in `docs/` come from the running application with temporary demonstration repositories. Native window resizing and restart restoration were also checked under Xvfb: resizing to 1220 × 780 automatically saved only width/height, and the next launch restored that size.
+Screenshots in `docs/` come from the running application with temporary demonstration repositories. Mouse-driven checks cover staging one hunk, confirming discard of another while preserving staged content, and unstaging the first hunk while retaining its working-tree edits. Native window resizing and restart restoration were also checked under Xvfb: resizing to 1220 × 780 automatically saved only width/height, and the next launch restored that size.
 
 ## Current limitations
 
 - Linux/X11 only; Wayland desktops require XWayland. The minimum window size is 1080×720. Windows and macOS process backends are not implemented.
 - No interactive rebase editor or commit drag-and-drop. Existing externally started rebases can be continued or aborted.
-- Partial staging and conflict editing operate on regular text files; binary conflict resolution is whole-version only. Symlinks/submodules and renamed files require whole-file or external operations.
+- Partial staging, unstaging, discard, and conflict editing operate on regular text files; binary conflict resolution is whole-version only. Symlinks/submodules and renamed files require whole-file or external operations.
 - Merge diffs use the first parent. History loads in batches of 300; search covers loaded commits only, and graph edges are hidden while filtering.
 - Commit drafts, file selections, and panel layout last only for the current session. External changes require a refresh.
 - Git commands have a 120-second timeout and an 8 MiB output limit. Exceeding either reports an error rather than presenting incomplete results.

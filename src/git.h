@@ -76,6 +76,7 @@ public:
     void discard_files(const std::vector<File>& files) const;
     void commit(const std::string& message) const;
     void stage_lines(const File& file, bool unstage, const std::string& preview, const std::vector<int>& lines) const;
+    void discard_lines(const File& file, const std::string& preview, const std::vector<int>& lines) const;
     Conflict read_conflict(const File& file) const;
     void save_resolution(const Conflict& conflict, const std::string& result, bool remove = false) const;
     static void clone(const std::string& url, const std::string& destination, std::shared_ptr<std::atomic_bool> cancel = {});

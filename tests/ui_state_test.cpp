@@ -264,6 +264,36 @@ int main() {
         editor.pick_line(2,true,false);
         require(editor.selected_lines.size() == 1 && editor.selected_lines.count(3),"Ctrl did not toggle a diff line");
         editor.set_detail("refreshed"); require(editor.selected_lines.empty(),"Diff refresh retained stale line selections");
+        auto* partial = restored.tabs[0].get();
+        std::string original; for (int i=0;i<30;++i) original += "line " + std::to_string(i) + "\n";
+        std::ofstream(root_b / "partial.txt") << original; git_b.stage({"partial.txt"}); git_b.commit("Partial UI base");
+        auto modified = original; modified.replace(modified.find("line 1\n"),7,"FIRST\n"); modified.replace(modified.find("line 28\n"),8,"LAST\n");
+        std::ofstream(root_b / "partial.txt") << modified; git_b.stage({"partial.txt"});
+        partial->load(root_b.string()); settle(restored); partial->select_workspace();
+        auto preview_partial = [&](bool staged) {
+            auto f = *std::find_if(partial->repo.files.begin(),partial->repo.files.end(),[](const auto& file) { return file.path == "partial.txt"; });
+            partial->select_file(f,staged); settle(restored);
+        };
+        auto first_hunk = [&] {
+            for (int i=0;i<int(partial->detail_lines.size());++i) if (partial->detail_lines[i].text.rfind("@@ ",0)==0) return i;
+            throw std::runtime_error("No partial diff hunk");
+        };
+        preview_partial(true); partial->stage_hunk(first_hunk()); settle(restored);
+        auto index_content = original; index_content.replace(index_content.find("line 28\n"),8,"LAST\n");
+        require(git_b.checked({"show",":partial.txt"})==index_content,"Unstage hunk affected the other staged hunk");
+        preview_partial(false); auto chosen_lines = partial->hunk_lines(first_hunk());
+        partial->request_discard_lines(chosen_lines,true); frame(restored); frame(restored);
+        require(partial->pending_kind=="discard hunk" && partial->pending_diff_lines.size()==2,"Discard hunk confirmation lost selection");
+        auto confirm_discard = [&](bool confirm) {
+            auto* modal = ImGui::FindWindowByName("Confirm Git operation"); require(modal && modal->Active,"Discard confirmation missing");
+            io.AddMousePosEvent(modal->Pos.x+(confirm ? 45 : 130),modal->Pos.y+modal->Size.y-30); frame(restored);
+            io.AddMouseButtonEvent(0,true); frame(restored); io.AddMouseButtonEvent(0,false); frame(restored); frame(restored);
+            require(partial->pending_kind.empty(),"Discard dialog button did not close confirmation"); settle(restored);
+        };
+        confirm_discard(false);
+        require(git_b.checked({"diff","--","partial.txt"}).find("FIRST")!=std::string::npos,"Cancel discarded working edits");
+        partial->request_discard_lines(chosen_lines,true); frame(restored); frame(restored); confirm_discard(true);
+        require(git_b.checked({"diff","--","partial.txt"}).empty() && git_b.checked({"show",":partial.txt"})==index_content,"Discard hunk changed staged content or kept discarded edits");
         snprintf(restored.tabs[0]->message,sizeof(restored.tabs[0]->message),"Keep existing draft");
         restored.tabs[0]->generate_message();
         while (restored.busy()) { frame(restored); std::this_thread::sleep_for(std::chrono::milliseconds(5)); }
