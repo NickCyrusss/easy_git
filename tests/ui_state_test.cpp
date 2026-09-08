@@ -294,6 +294,40 @@ int main() {
         require(git_b.checked({"diff","--","partial.txt"}).find("FIRST")!=std::string::npos,"Cancel discarded working edits");
         partial->request_discard_lines(chosen_lines,true); frame(restored); frame(restored); confirm_discard(true);
         require(git_b.checked({"diff","--","partial.txt"}).empty() && git_b.checked({"show",":partial.txt"})==index_content,"Discard hunk changed staged content or kept discarded edits");
+        std::ofstream(root_b / "action.txt") << "stage without selecting\n";
+        partial->load(root_b.string()); settle(restored); partial->select_workspace();
+        auto index_before_action = git_b.checked({"write-tree"});
+        auto click_file_action = [&](bool staged,bool all) {
+            partial->clear_file_selection();
+            auto draw = [&] {
+                ImGui::NewFrame(); ImGui::SetNextWindowPos({20,20}); ImGui::SetNextWindowSize({420,320});
+                ImGui::Begin("File action regression",nullptr,ImGuiWindowFlags_NoSavedSettings);
+                auto pos = ImGui::GetCursorScreenPos(); float width = ImGui::GetContentRegionAvail().x;
+                ImVec2 target{pos.x+width-(all ? 71.0f : 36.0f),pos.y+15};
+                if (all) partial->file_group(staged ? 1 : 0,240);
+                else {
+                    auto found = std::find_if(partial->repo.files.begin(),partial->repo.files.end(),[](const auto& f) { return f.path == "action.txt"; });
+                    require(found != partial->repo.files.end(),"Missing direct action file");
+                    partial->file_row(int(found-partial->repo.files.begin()),staged ? 1 : 0);
+                }
+                ImGui::Dummy({0,1}); ImGui::End(); ImGui::Render(); return target;
+            };
+            auto target = draw(); draw();
+            io.AddMousePosEvent(target.x,target.y); draw(); draw();
+            io.AddMouseButtonEvent(0,true); draw(); draw(); draw(); // Keep the button held across frames.
+            io.AddMouseButtonEvent(0,false); draw();
+            require(partial->busy(),"Unselected file action did not execute after mouse release");
+            require(partial->file_selection[0].empty() && partial->file_selection[1].empty(),"Direct action unexpectedly selected a file");
+            settle(restored);
+        };
+        click_file_action(false,false);
+        require(git_b.checked({"show",":action.txt"})=="stage without selecting\n","Direct Stage File failed");
+        click_file_action(true,false);
+        require(git_b.checked({"write-tree"})==index_before_action,"Direct Unstage changed unrelated staged files");
+        click_file_action(false,true);
+        require(git_b.checked({"diff","--name-only"}).empty() && git_b.checked({"ls-files","--others","--exclude-standard"}).empty(),"Stage All without selection failed");
+        click_file_action(true,true);
+        require(git_b.checked({"diff","--cached","--name-only"}).empty(),"Unstage All without selection failed");
         snprintf(restored.tabs[0]->message,sizeof(restored.tabs[0]->message),"Keep existing draft");
         restored.tabs[0]->generate_message();
         while (restored.busy()) { frame(restored); std::this_thread::sleep_for(std::chrono::milliseconds(5)); }

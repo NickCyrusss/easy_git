@@ -970,7 +970,8 @@ struct RepoTab {
         auto p = ImGui::GetCursorScreenPos(); float width = ImGui::GetContentRegionAvail().x;
         float action_width = kind == 2 ? 0 : 76;
         bool clicked = ImGui::Selectable("##file",selected,0,{std::max(30.0f,width-action_width),30});
-        bool hovered = ImGui::IsWindowHovered() && ImGui::IsMouseHoveringRect(p,{p.x+width,p.y+30});
+        // Keep the hover action alive while its mouse button is held, through release.
+        bool hovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) && ImGui::IsMouseHoveringRect(p,{p.x+width,p.y+30});
         bool focused = ImGui::IsItemFocused();
         if (clicked) pick_file(index,kind,ImGui::GetIO().KeyCtrl,ImGui::GetIO().KeyShift);
         if (ImGui::IsItemClicked(ImGuiMouseButton_Right) && !selected && (!busy() || previewing)) {

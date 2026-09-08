@@ -55,6 +55,8 @@ No proxy is required by default. If your network needs one for dependency downlo
 4. Select a commit to browse **Changed Files**, or right-click a commit/branch for Git operations. Clicking a sidebar branch navigates to its tip; checkout is a separate action in the branch selector or context menu.
 5. Press **F5** to refresh after external changes. Git work runs asynchronously, and failures display the command error.
 
+Hover a file row and click **Stage File** or **Unstage** directly; selecting the file first is optional. The button stays available while you hold the mouse button and executes on release. Row buttons affect only that file. With no files selected, the group’s **Stage All Changes** / **Unstage All Changes** button applies to the entire group; with a selection, it applies to the selected files.
+
 **Discard** removes unstaged changes while preserving staged content; discarding untracked files deletes them. Confirmation lists the selected files. Conflicts, directories, and submodules require handling in an editor or their own repository.
 
 **Hard reset** requires an extra confirmation because it overwrites the index and working tree and can remove untracked paths that obstruct checkout. Soft reset keeps staged and working changes; mixed reset resets the index but keeps working files.
@@ -126,7 +128,7 @@ Tests create disposable repositories under `/tmp`:
 | `git_operations` | Cherry-pick, merge, revert, reset modes, stash handling, conflict continuation/abort/skip, and discard protections |
 | `git_workflows` | Partial staging/unstaging/discard, selection isolation and stale-preview rejection, conflict resolution, clone/init, local/remote branch deletion, and force-push lease rejection |
 | `settings_and_ai` | Configuration replacement and permissions, window-size round trips and validation, per-model settings and migration, custom model add/delete protection, OpenAI/Anthropic HTTP requests and responses, cancellation, and stale-index protection |
-| `repository_tabs` | Headless ImGui interactions, independent tabs and drafts, branch navigation, file selections, batch operations, settings Save/Cancel including model add/delete, partial unstage and discard confirmation/cancellation, and restart recovery |
+| `repository_tabs` | Headless ImGui interactions, independent tabs and drafts, branch navigation, file selections, unselected row actions with mouse press/hold/release, Stage All/Unstage All without selection, batch operations, settings Save/Cancel including model add/delete, partial unstage and discard confirmation/cancellation, and restart recovery |
 
 AI tests use a local loopback HTTP server and require permission to listen on a local port. They do not call paid providers. Actual provider calls require your own API key and have not been validated by these tests.
 
