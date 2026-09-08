@@ -328,6 +328,49 @@ int main() {
         require(git_b.checked({"diff","--name-only"}).empty() && git_b.checked({"ls-files","--others","--exclude-standard"}).empty(),"Stage All without selection failed");
         click_file_action(true,true);
         require(git_b.checked({"diff","--cached","--name-only"}).empty(),"Unstage All without selection failed");
+        git_b.stage({"partial.txt"});
+        auto staged_before_discard = git_b.checked({"write-tree"});
+        partial->load(root_b.string()); settle(restored); partial->select_workspace();
+        snprintf(partial->file_search,sizeof(partial->file_search),"action.txt"); partial->rebuild_file_lists();
+        auto all_unstaged = partial->discard_targets();
+        require(all_unstaged.size() > partial->file_lists[0].size(),"Discard All omitted files hidden by the filter");
+        partial->file_selection[1].insert("partial.txt");
+        require(partial->discard_targets().empty(),"Selecting a staged file enabled Discard All");
+        partial->clear_file_selection(); partial->file_selection[0].insert("action.txt");
+        require(partial->discard_targets().size()==1 && partial->discard_targets()[0].path=="action.txt","Selected discard included other files");
+        partial->clear_file_selection();
+        auto click_discard_control = [&] {
+            auto draw = [&] {
+                ImGui::NewFrame(); ImGui::SetNextWindowPos({20,20}); ImGui::SetNextWindowSize({500,200});
+                ImGui::Begin("Discard control regression",nullptr,ImGuiWindowFlags_NoSavedSettings);
+                auto pos = ImGui::GetCursorScreenPos(); partial->file_controls();
+                ImGui::Dummy({0,1}); ImGui::End(); ImGui::Render(); return ImVec2(pos.x+32,pos.y+14);
+            };
+            auto target=draw(); draw(); io.AddMousePosEvent(target.x,target.y); draw(); draw();
+            io.AddMouseButtonEvent(0,true); draw(); io.AddMouseButtonEvent(0,false); draw();
+            frame(restored); frame(restored);
+            require(partial->pending_kind=="discard files" && partial->pending_discard_all && partial->pending_files.size()==all_unstaged.size(),"Unselected Discard did not confirm all unstaged files");
+        };
+        click_discard_control(); confirm_discard(false);
+        require(fs::exists(root_b/"action.txt"),"Cancel Discard All removed a file");
+        click_discard_control(); confirm_discard(true);
+        require(!fs::exists(root_b/"action.txt") && git_b.checked({"diff","--name-only"}).empty() && git_b.checked({"write-tree"})==staged_before_discard,"Discard All changed staged content or kept unstaged files");
+        partial->file_search[0]=0; partial->rebuild_file_lists();
+        require(partial->discard_targets().empty(),"Discard was available without unstaged files");
+        preview_partial(true); partial->file_selection[1].insert("partial.txt"); partial->selection_anchor[1]="partial.txt";
+        auto selected_hunk=partial->hunk_lines(first_hunk()); partial->selected_lines.insert(selected_hunk.begin(),selected_hunk.end());
+        ImGuiWindow* history_window=nullptr;
+        for (auto* window : GImGui->Windows)
+            if (window->Active && window->ParentWindow && std::string(window->ParentWindow->Name)=="Easy Git" &&
+                std::string(window->Name).find("history_panel")!=std::string::npos) history_window=window;
+        require(history_window,"Diff panel missing");
+        io.AddMousePosEvent(history_window->Pos.x+60,history_window->Pos.y+30); frame(restored);
+        io.AddMouseButtonEvent(0,true); frame(restored); io.AddMouseButtonEvent(0,false); frame(restored); frame(restored);
+        require(!partial->show_diff && !partial->has_file_selection() && partial->selected_file.empty() && partial->selection_anchor[1].empty() && partial->selected_lines.empty(),"Commit graph button retained file selection");
+        preview_partial(true);
+        partial->mutate("Delayed preview",[](const eg::Git&) { std::this_thread::sleep_for(std::chrono::milliseconds(30)); });
+        partial->return_to_graph(); settle(restored);
+        require(!partial->show_diff && !partial->has_file_selection() && partial->selected_file.empty(),"Background refresh restored selection after returning to graph");
         snprintf(restored.tabs[0]->message,sizeof(restored.tabs[0]->message),"Keep existing draft");
         restored.tabs[0]->generate_message();
         while (restored.busy()) { frame(restored); std::this_thread::sleep_for(std::chrono::milliseconds(5)); }

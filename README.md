@@ -49,7 +49,7 @@ No proxy is required by default. If your network needs one for dependency downlo
 
 ## Everyday workflow
 
-1. Select **Working changes** or **// WIP** to inspect unstaged and staged files. Click a file to display its diff; use **< Commit graph** to return to history.
+1. Select **Working changes** or **// WIP** to inspect unstaged and staged files. Click a file to display its diff; use **< Commit graph** to return to history and clear file/line selections.
 2. Stage individual files or a selection. **Ctrl+click** toggles a file, **Shift+click** selects a range, and **Ctrl+Shift+click** adds a range. Tree selection follows visible directory order and skips collapsed entries.
 3. Enter a summary and optional description, then click **Commit changes**. Commits require staged changes and no unresolved conflicts. Configure your Git author identity before your first commit.
 4. Select a commit to browse **Changed Files**, or right-click a commit/branch for Git operations. Clicking a sidebar branch navigates to its tip; checkout is a separate action in the branch selector or context menu.
@@ -57,7 +57,7 @@ No proxy is required by default. If your network needs one for dependency downlo
 
 Hover a file row and click **Stage File** or **Unstage** directly; selecting the file first is optional. The button stays available while you hold the mouse button and executes on release. Row buttons affect only that file. With no files selected, the group’s **Stage All Changes** / **Unstage All Changes** button applies to the entire group; with a selection, it applies to the selected files.
 
-**Discard** removes unstaged changes while preserving staged content; discarding untracked files deletes them. Confirmation lists the selected files. Conflicts, directories, and submodules require handling in an editor or their own repository.
+With no file selected, **Discard** targets all unstaged files in the repository, including files hidden by filtering or collapsed folders. Selecting unstaged files limits Discard to that selection; selecting only staged files disables it. The confirmation lists the exact scope, and Cancel keeps the changes. **Discard** removes unstaged changes while preserving staged content; discarding untracked files deletes them. Conflicts, directories, and submodules require handling in an editor or their own repository.
 
 **Hard reset** requires an extra confirmation because it overwrites the index and working tree and can remove untracked paths that obstruct checkout. Soft reset keeps staged and working changes; mixed reset resets the index but keeps working files.
 

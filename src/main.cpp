@@ -158,6 +158,7 @@ struct RepoTab {
     std::array<std::string, 3> selection_anchor;
     std::array<std::vector<int>, 3> visible_files;
     std::vector<eg::File> pending_files;
+    bool pending_discard_all = false;
     std::string pending_diff;
     std::vector<int> pending_diff_lines;
     bool previewing = false;
@@ -263,6 +264,17 @@ struct RepoTab {
             if (file_selection[kind].count(files[index].path)) chosen.push_back(files[index]);
         return chosen;
     }
+    bool has_file_selection() const {
+        return std::any_of(file_selection.begin(),file_selection.end(),[](const auto& files) { return !files.empty(); });
+    }
+    std::vector<eg::File> discard_targets() const {
+        auto files = chosen_files(0);
+        if (!has_file_selection()) for (const auto& file : repo.files) if (file.unstaged()) files.push_back(file);
+        return files;
+    }
+    void return_to_graph() {
+        show_diff = false; clear_file_selection(); selected_file.clear(); selected_staged = false; set_detail("");
+    }
     void pick_file(int index, int kind, bool ctrl, bool shift) {
         if (busy() && !previewing) return;
         const auto& files = kind == 2 ? changed_files : repo.files;
@@ -295,9 +307,9 @@ struct RepoTab {
             }
         });
     }
-    void request_discard(std::vector<eg::File> files) {
+    void request_discard(std::vector<eg::File> files,bool all = false) {
         if (files.empty() || !ready()) return;
-        pending_files = std::move(files); pending_kind = "discard files";
+        pending_files = std::move(files); pending_discard_all = all; pending_kind = "discard files";
     }
     void filter() {
         matches.clear();
@@ -412,13 +424,14 @@ struct RepoTab {
                 return;
             }
             if (r.reload) {
+                bool keep_preview = show_diff;
                 clear_file_selection();
                 just_opened = repo.root.empty();
                 repo = std::move(r.snapshot); graph = eg::layout_graph(repo.commits); filter();
                 selected_file.clear(); selected_commit.clear(); set_detail(""); workspace = true; show_diff = false;
                 changed_files.clear(); commit_body.clear(); stash_view = false; viewed_stash = {}; rebuild_file_lists();
                 selected_ref.clear(); scroll_to_commit.clear();
-                if (!r.preview_file.empty()) {
+                if (!r.preview_file.empty() && keep_preview) {
                     selected_file = r.preview_file; selected_staged = r.preview_staged;
                     file_selection[r.preview_staged ? 1 : 0].insert(r.preview_file);
                     show_diff = true; set_detail(std::move(r.detail));
@@ -940,7 +953,7 @@ struct RepoTab {
     }
     void center_panel() {
         if (!show_diff) { history(); return; }
-        if (button("< Commit graph")) show_diff = false;
+        if (button("< Commit graph")) return_to_graph();
         ImGui::SameLine(); label(workspace ? (selected_staged ? "STAGED" : "UNSTAGED") : stash_view ? "STASH" : "COMMITTED");
         ImGui::SameLine();
         if (button("Copy patch", !busy() && !detail.empty())) ImGui::SetClipboardText(detail.c_str());
@@ -1031,13 +1044,15 @@ struct RepoTab {
     void file_controls() {
         auto p = ImGui::GetCursorScreenPos(); float width = ImGui::GetContentRegionAvail().x;
         if (workspace) {
-            auto chosen = chosen_files(0);
+            auto chosen = discard_targets();
             bool enabled = ready() && !chosen.empty() && std::none_of(chosen.begin(),chosen.end(),[](const auto& f) { return f.conflicted(); });
             ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,{5,4});
             ImGui::PushFont(body_font,14); ImGui::PushStyleColor(ImGuiCol_Text,red);
-            if (button("Discard",enabled,{64,28})) request_discard(chosen);
+            bool all = !has_file_selection();
+            if (button("Discard",enabled,{64,28})) request_discard(chosen,all);
             ImGui::PopStyleColor(); ImGui::PopFont(); ImGui::PopStyleVar();
-            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Discard selected unstaged files");
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                ImGui::SetTooltip("%s",all ? "Discard ALL unstaged changes, including files hidden by the filter" : "Discard selected unstaged files");
         }
         float toggle_width = 140 + ImGui::GetStyle().ItemSpacing.x;
         ImGui::SetCursorScreenPos({p.x+(width-toggle_width)*0.5f,p.y});
@@ -1218,7 +1233,7 @@ struct RepoTab {
             ImGui::EndChild();
             ImGui::TextWrapped("Only these unstaged edits will be discarded. Staged changes and other lines are kept. Discard cannot be undone here.");
         } else if (pending_kind == "discard files") {
-            ImGui::Text("Discard unstaged changes in %zu files?",pending_files.size());
+            ImGui::Text("Discard %sunstaged changes in %zu files?",pending_discard_all ? "ALL " : "selected ",pending_files.size());
             ImGui::BeginChild("discard_files",{0,std::min(160.0f,28.0f*pending_files.size()+10)},ImGuiChildFlags_Borders);
             for (const auto& file : pending_files) ImGui::TextWrapped("%s%s",file.index == '?' ? "[Delete] " : "",visible_path(file.path).c_str());
             ImGui::EndChild();
