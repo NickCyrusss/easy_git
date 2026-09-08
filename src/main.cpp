@@ -1344,6 +1344,9 @@ struct App {
     eg::Settings settings_draft;
     std::string config_path, config_error, last_saved, restore_active;
     bool settings_open = false, config_blocked = false, show_key = false;
+    char ai_model_name[81]{}, ai_filter[128]{};
+    std::string ai_model_error;
+    double window_changed_at = -1;
     void initialize(const std::string& file,const std::vector<std::string>& roots = {}) {
         config_path = file;
         try { settings = eg::read_settings(file); }
@@ -1356,7 +1359,7 @@ struct App {
         if (tabs.empty()) add_tab().opening = true;
         if (!config_error.empty()) tabs.front()->status = "Settings could not be loaded. Open Settings for details.";
     }
-    void persist() {
+    void persist(bool force = false) {
         if (config_path.empty() || config_blocked || !restore_active.empty()) return;
         settings.repositories.clear(); settings.active_repository.clear();
         for (const auto& tab : tabs) {
@@ -1366,6 +1369,7 @@ struct App {
         }
         auto json = eg::settings_json(settings);
         if (json == last_saved) return;
+        if (!force && ImGui::GetTime()-window_changed_at < 0.25) return;
         last_saved = json;
         try { eg::write_settings(config_path,settings); config_error.clear(); }
         catch (const std::exception& e) {
@@ -1375,7 +1379,7 @@ struct App {
     }
     void settings_dialog() {
         if (settings_open) {
-            settings_draft = settings; show_key = false;
+            settings_draft = settings; show_key = false; ai_model_name[0] = ai_filter[0] = 0; ai_model_error.clear();
             ImGui::OpenPopup("Settings"); settings_open = false;
         }
         ImGui::SetNextWindowSize({660,630},ImGuiCond_Appearing);
@@ -1397,14 +1401,74 @@ struct App {
                 if (ImGui::InputText("##value",buffer,sizeof(buffer),password ? ImGuiInputTextFlags_Password : 0)) value = buffer;
                 ImGui::PopID();
             };
-            row("Provider preset");
-            if (ImGui::BeginCombo("##provider",draft.provider.c_str())) {
-                for (const auto& preset : eg::ai_presets()) if (ImGui::Selectable(preset.name,draft.provider == preset.name)) {
-                    eg::select_ai_provider(settings_draft,preset); show_key = false;
-                }
+            row("AI Provider / Model");
+            if (ImGui::BeginCombo("##provider",draft.provider.c_str(),ImGuiComboFlags_HeightLarge)) {
+                ImGui::SetNextItemWidth(-1); ImGui::InputTextWithHint("##provider_search","Search providers / models",ai_filter,sizeof(ai_filter));
+                ImGuiTextFilter filter(ai_filter);
+                auto select = [&](const std::string& name) {
+                    if (filter.PassFilter(name.c_str()) && ImGui::Selectable(name.c_str(),draft.provider == name)) {
+                        eg::select_ai_model(settings_draft,name); show_key = false; ai_model_error.clear();
+                    }
+                };
+                ImGui::TextDisabled("PRESETS");
+                for (const auto& preset : eg::ai_presets()) select(preset.name);
+                ImGui::Separator(); ImGui::TextDisabled("MY MODELS");
+                // Selection can save the previous profile, so iterate a stable list.
+                std::vector<std::string> names;
+                for (const auto& [name,profile] : settings_draft.ai_profiles) { (void)profile; if (!eg::is_ai_preset(name)) names.push_back(name); }
+                for (const auto& name : names) select(name);
                 ImGui::EndCombo();
             }
+            row("Manage models");
+            if (button("Add model")) { ai_model_name[0] = 0; ai_model_error.clear(); ImGui::OpenPopup("Add AI model"); }
+            ImGui::SameLine();
+            ImGui::BeginDisabled(eg::is_ai_preset(draft.provider));
+            if (button("Delete model")) ImGui::OpenPopup("Delete AI model");
+            ImGui::EndDisabled();
+            if (eg::is_ai_preset(draft.provider)) { ImGui::SameLine(); ImGui::TextDisabled("Preset (protected)"); }
+            if (ImGui::BeginPopupModal("Add AI model",nullptr,ImGuiWindowFlags_AlwaysAutoResize)) {
+                ImGui::TextUnformatted("Name this model configuration (for example, Work Claude).");
+                ImGui::SetNextItemWidth(400); ImGui::InputText("##model_name",ai_model_name,sizeof(ai_model_name));
+                if (!ai_model_error.empty()) ImGui::TextWrapped("%s",ai_model_error.c_str());
+                if (button("Add")) {
+                    try { eg::add_ai_model(settings_draft,ai_model_name); show_key = false; ai_model_error.clear(); ImGui::CloseCurrentPopup(); }
+                    catch (const std::exception& e) { ai_model_error = e.what(); }
+                }
+                ImGui::SameLine(); if (button("Cancel")) ImGui::CloseCurrentPopup();
+                ImGui::EndPopup();
+            }
+            if (ImGui::BeginPopupModal("Delete AI model",nullptr,ImGuiWindowFlags_AlwaysAutoResize)) {
+                ImGui::Text("Delete model configuration '%s'?",draft.provider.c_str());
+                ImGui::TextUnformatted("Save settings to keep this change, or Cancel settings to undo it.");
+                if (button("Delete")) {
+                    eg::delete_ai_model(settings_draft,draft.provider); show_key = false; ImGui::CloseCurrentPopup();
+                }
+                ImGui::SameLine(); if (button("Cancel")) ImGui::CloseCurrentPopup();
+                ImGui::EndPopup();
+            }
+            row("Request format");
+            if (ImGui::BeginCombo("##format",draft.format.c_str())) {
+                for (const auto* format : {"OpenAI","Anthropic"}) if (ImGui::Selectable(format,draft.format == format)) draft.format = format;
+                ImGui::EndCombo();
+            }
+            if (draft.format == "OpenAI") {
+                row("Token limit field");
+                if (ImGui::BeginCombo("##token_parameter",draft.token_parameter.c_str())) {
+                    for (const auto* field : {"max_tokens","max_completion_tokens"}) if (ImGui::Selectable(field,draft.token_parameter == field)) draft.token_parameter = field;
+                    ImGui::EndCombo();
+                }
+            }
             text_field("API base URL",draft.base_url); text_field("Model / Endpoint ID",draft.model);
+            if (draft.provider == "Azure OpenAI") {
+                row("Azure setup"); ImGui::TextWrapped("Use your resource URL ending in /openai/v1 and deployment name as Model.");
+            }
+            if (draft.provider == "iFlytek Spark") {
+                row("Spark credential"); ImGui::TextWrapped("Enter the HTTP API's APIPassword as API key.");
+            }
+            if (draft.provider == "Amazon Bedrock") {
+                row("Bedrock setup"); ImGui::TextWrapped("Use a Bedrock API key and a region where your model is available.");
+            }
+            if (draft.model.empty()) { row("Model required"); ImGui::TextWrapped("Enter a model ID available in your account or local server."); }
             text_field("API key",draft.api_key,!show_key); row(" "); ImGui::Checkbox("Show key",&show_key);
             text_field("Proxy (blank: direct)",draft.proxy); text_field("Output language",draft.language);
             row("Timeout (seconds)"); ImGui::InputInt("##timeout",&draft.timeout);
@@ -1414,12 +1478,12 @@ struct App {
             if (ImGui::InputTextMultiline("##instructions",prompt,sizeof(prompt),{-1,68})) draft.instructions = prompt;
             ImGui::EndTable();
         }
-        ImGui::TextWrapped("API keys are stored in this local file with owner-only permissions (0600). Preset model IDs and API URLs are editable to match your account and region.");
+        ImGui::TextWrapped("Each model saves its own format, URL, key and parameters. Presets cannot be deleted; model IDs and URLs remain editable for your account and region. API keys are stored locally with owner-only permissions (0600).");
         ImGui::EndChild();
         if (button("Save settings")) {
             try {
                 if (draft.enabled) eg::validate_ai(draft);
-                settings.ai = draft; settings.ai_profiles = settings_draft.ai_profiles; config_blocked = false; last_saved.clear(); persist();
+                settings.ai = draft; settings.ai_profiles = settings_draft.ai_profiles; config_blocked = false; last_saved.clear(); persist(true);
                 if (config_error.empty()) ImGui::CloseCurrentPopup();
             } catch (const std::exception& e) { config_error = e.what(); }
         }
@@ -1440,7 +1504,7 @@ struct App {
         return std::any_of(tabs.begin(),tabs.end(),[](const auto& tab) { return tab->busy(); });
     }
     void shutdown() {
-        persist();
+        persist(true);
         for (auto& tab : tabs) *tab->cancel = true;
         for (auto& tab : tabs) if (tab->job.valid()) tab->job.wait();
     }
@@ -1552,6 +1616,18 @@ struct App {
     }
 };
 
+void restore_window(GLFWwindow* window,const eg::WindowSettings& saved) {
+    glfwSetWindowSizeLimits(window,1080,720,GLFW_DONT_CARE,GLFW_DONT_CARE);
+    glfwSetWindowSize(window,std::max(1080,saved.width),std::max(720,saved.height));
+    glfwShowWindow(window);
+}
+bool capture_window(GLFWwindow* window,eg::WindowSettings& saved) {
+    if (glfwGetWindowAttrib(window,GLFW_ICONIFIED)) return false;
+    int width, height; glfwGetWindowSize(window,&width,&height);
+    if (width < 64 || height < 64 || (width == saved.width && height == saved.height)) return false;
+    saved.width = width; saved.height = height; return true;
+}
+
 void save_frame(const char* path, int w, int h) {
     std::vector<unsigned char> pixels(size_t(w)*h*3);
     glPixelStorei(GL_PACK_ALIGNMENT,1); glReadPixels(0,0,w,h,GL_RGB,GL_UNSIGNED_BYTE,pixels.data());
@@ -1578,9 +1654,9 @@ int main(int argc, char** argv) {
     if (!glfwInit()) return 1;
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR,3); glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR,3);
     glfwWindowHint(GLFW_OPENGL_PROFILE,GLFW_OPENGL_CORE_PROFILE);
+    glfwWindowHint(GLFW_VISIBLE,GLFW_FALSE);
     auto* window = glfwCreateWindow(1440,900,"Easy Git - repository workspace",nullptr,nullptr);
     if (!window) { glfwTerminate(); return 1; }
-    glfwSetWindowSizeLimits(window,1080,720,GLFW_DONT_CARE,GLFW_DONT_CARE);
     glfwMakeContextCurrent(window); glfwSwapInterval(1);
     IMGUI_CHECKVERSION(); ImGui::CreateContext(); theme();
     auto& io = ImGui::GetIO(); io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard; io.IniFilename = nullptr;
@@ -1597,9 +1673,12 @@ int main(int argc, char** argv) {
     App app;
     try { app.initialize(config_file.empty() ? eg::default_settings_path() : config_file,roots); }
     catch (const std::exception& e) { app.add_tab().error = e.what(); }
+    restore_window(window,app.settings.window);
     int rendered = 0;
     while (!glfwWindowShouldClose(window)) {
-        glfwPollEvents(); ImGui_ImplOpenGL3_NewFrame(); ImGui_ImplGlfw_NewFrame(); ImGui::NewFrame();
+        glfwPollEvents();
+        if (capture_window(window,app.settings.window)) app.window_changed_at = ImGui::GetTime();
+        ImGui_ImplOpenGL3_NewFrame(); ImGui_ImplGlfw_NewFrame(); ImGui::NewFrame();
         app.frame(); ImGui::Render();
         int w,h; glfwGetFramebufferSize(window,&w,&h);
         glViewport(0,0,w,h); glClearColor(0.09f,0.1f,0.14f,1); glClear(GL_COLOR_BUFFER_BIT);

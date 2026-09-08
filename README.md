@@ -15,8 +15,8 @@ Easy Git takes inspiration from GitKraken's three-panel interface. It is an inde
 - **File workflow:** separate Unstaged and Staged panels, Path and Tree views, filtering, inline diffs with line numbers, Ctrl/Shift selection, file/line/hunk staging and unstaging, and confirmed discard.
 - **Git operations:** commit, create and switch branches, create tags, fetch, fast-forward-only pull, push, cherry-pick, merge, revert, soft/mixed/hard reset, clone, initialization, branch deletion, and force push with an explicit lease.
 - **Stash:** save tracked and untracked changes; click to preview, then use the context menu to apply or delete. Conflict operations expose Continue, Abort, and Skip where supported.
-- **Appearance:** light and dark themes, resizable panels, and collapsible Local, Remote, Tags, and Stash sections.
-- **Optional AI:** generate an editable commit draft from staged changes using DeepSeek, Kimi, Qwen, Doubao, or a custom Chat Completions compatible endpoint. Each provider keeps its own settings.
+- **Appearance:** light and dark themes, automatic window-size restoration, resizable panels, and collapsible Local, Remote, Tags, and Stash sections.
+- **Optional AI:** generate an editable commit draft from staged changes using OpenAI or Anthropic compatible APIs, with 36 searchable provider/platform presets and independent, named model configurations.
 
 ## Build and run
 
@@ -85,16 +85,18 @@ Interaction references: [GitKraken partial staging](https://support.gitkraken.co
 
 The top-right **Light / Dark** button switches themes. **Settings** controls AI generation, which is disabled by default.
 
-1. Enable AI commit messages and choose **DeepSeek**, **Kimi**, **Qwen**, **Doubao**, or **Custom**.
-2. Set your API base URL, model/endpoint ID, and API key. You can also configure the proxy, output language, timeout, output token limit, diff size limit, and style instructions. Preset model IDs and URLs are editable for your account and region.
-3. Switch providers to restore their individual settings, including keys and customized model names. A provider's first selection uses its defaults. **Save settings** saves all profiles edited in the dialog; **Cancel** discards the dialog's edits.
+1. Enable AI commit messages and search **AI Provider / Model** to choose a preset. The 36 presets cover Chinese and international providers, inference platforms, and local servers; see the [provider catalog and official references](docs/ai-providers.md). Use **Add model** to create additional named configurations, including multiple models from the same provider. **Delete model** removes custom configurations after confirmation; built-in presets cannot be deleted.
+2. Choose **Request format**: **OpenAI** (Chat Completions) or **Anthropic** (Messages). Set your API base URL, model/endpoint ID, and API key. You can also configure the proxy, output language, timeout, output token limit, diff size limit, and style instructions. Preset model IDs and URLs are editable for your account and region.
+3. Switch providers to restore their individual settings, including request format, keys and customized model names. A provider's first selection uses its defaults. **Save settings** saves all profiles edited in the dialog; **Cancel** discards the dialog's edits, including added or deleted models.
 4. Stage your changes and click **AI Generate**, to the right of **COMMIT**. Review the returned summary and description before committing. Generation never commits automatically.
 
 Only the staged diff and its statistics are sent to the selected provider. Unstaged changes are excluded. The default diff limit is **65,536 bytes**; larger requests are rejected instead of silently truncated. **Cancel AI** cancels a request; failures preserve the draft, and results are rejected if the index changed during generation. Requests may incur charges from your provider.
 
-The HTTP interface uses Chat Completions compatible requests. Remote endpoints must use HTTPS; localhost endpoints may use HTTP and bypass the proxy. A base URL may also contain the complete `/chat/completions` path.
+OpenAI format sends Bearer authentication and reads `choices[].message.content`; its **Token limit field** selects `max_tokens` or `max_completion_tokens` (the OpenAI preset uses the latter). Anthropic format sends `x-api-key` and `anthropic-version`, a top-level system prompt, and reads text blocks from `content[]`, excluding thinking blocks. Truncated or incomplete responses are rejected. Remote endpoints must use HTTPS; localhost endpoints may use HTTP and bypass the proxy. Base URLs and full `/chat/completions` or `/messages` endpoints are accepted. Changing format may require changing the URL to the provider’s corresponding compatible API; it does not make an unsupported API compatible. The proxy defaults to blank (direct).
 
-Open repositories, the active repository, theme, and all AI profiles are saved to **`~/.easy_git`** as JSON and restored on startup. Saves replace the file atomically with **0600** permissions. API keys are stored as plaintext in this owner-only file. Existing single-provider configurations remain supported. A malformed file is preserved and reported until you explicitly save replacement settings.
+Window width and height are saved automatically after resizing and restored on startup (minimum 1080 × 720). Window position, maximized state and panel layouts are not saved.
+
+Window dimensions, open repositories, the active repository, theme, and all AI profiles are saved to **`~/.easy_git`** as JSON and restored on startup. Saves replace the file atomically with **0600** permissions. API keys are stored as plaintext in this owner-only file. Existing single-provider configurations remain supported. The old fixed **Custom** entry migrates to a deletable **Imported model** profile without losing its settings; legacy files retain their original OpenAI request format. A malformed file is preserved and reported until you explicitly save replacement settings.
 
 Use a separate configuration file for testing:
 
@@ -119,8 +121,8 @@ Tests create disposable repositories under `/tmp`:
 | `git_workflow` | Status, unusual paths, staging, commits, commit graphs, pagination, file diffs, stash, and local remote operations |
 | `git_operations` | Cherry-pick, merge, revert, reset modes, stash handling, conflict continuation/abort/skip, and discard protections |
 | `git_workflows` | Partial staging/unstaging, conflict resolution, clone/init, local/remote branch deletion, and force-push lease rejection |
-| `settings_and_ai` | Configuration replacement and permissions, provider switching and restart recovery, legacy migration, mock HTTP requests, cancellation, error handling, and stale-index protection |
-| `repository_tabs` | Headless ImGui interactions, independent tabs and drafts, branch navigation, file selections, batch operations, settings Save/Cancel, and restart recovery |
+| `settings_and_ai` | Configuration replacement and permissions, window-size round trips and validation, per-model settings and migration, custom model add/delete protection, OpenAI/Anthropic HTTP requests and responses, cancellation, and stale-index protection |
+| `repository_tabs` | Headless ImGui interactions, independent tabs and drafts, branch navigation, file selections, batch operations, settings Save/Cancel including model add/delete, and restart recovery |
 
 AI tests use a local loopback HTTP server and require permission to listen on a local port. They do not call paid providers. Actual provider calls require your own API key and have not been validated by these tests.
 
@@ -140,7 +142,7 @@ xvfb-run -a -s '-screen 0 1440x900x24' \
   --frames 30 --screenshot /tmp/easy-git.ppm
 ```
 
-Screenshots in `docs/` come from the running application with temporary demonstration repositories.
+Screenshots in `docs/` come from the running application with temporary demonstration repositories. Native window resizing and restart restoration were also checked under Xvfb: resizing to 1220 × 780 automatically saved only width/height, and the next launch restored that size.
 
 ## Current limitations
 

@@ -40,14 +40,17 @@ ImGui 固定为 `v1.92.5`，GLFW 固定为 `3.4`，首次配置时由 CMake 下�
 
 - 右上角 **Light / Dark** 一键切换浅色与深色主题，覆盖提交图、文件列表、Diff 和弹窗。
 - 右上角 **Settings** 可启用 AI 提交信息，并配置服务商预设、API Base URL、模型/Endpoint ID、API Key、代理、输出语言、超时、输出 token 上限、Diff 字节上限及风格提示词。
-- 预设 DeepSeek、Kimi、Qwen（通义千问）、Doubao（豆包）及 Custom。预设值可编辑，以匹配账户开通的模型、业务空间和地域；各服务商分别保留 API Key、模型名称、接口地址、代理及生成参数；切换时恢复对应配置，首次选择使用预设值。点击 **Save settings** 会将本次编辑过的所有服务商配置一并写入 `~/.easy_git`，重启后继续保留；**Cancel** 放弃本次编辑。兼容旧版单服务商配置。
+- **AI Provider / Model** 提供 36 项可搜索的国内外厂商、推理平台及本地服务预设，包含 DeepSeek、Kimi、通义千问、豆包、OpenAI、Anthropic、Gemini、智谱、MiniMax、百度千帆、腾讯混元等，详见[预设目录与官方接口文档](docs/ai-providers.md)。预设无法删除，模型 ID 和地址仍可按账户、地域修改。
+- **Add model** 添加具名自定义模型，同一厂商也可保存多个配置；**Delete model** 确认后删除自定义模型。每项独立保存请求格式、地址、模型、密钥、代理和生成参数；切换时恢复，首次选择预设时使用默认值。**Save settings** 一并保存所有编辑、添加和删除；**Cancel** 全部放弃。旧版固定 Custom 自动迁移成可删除的 **Imported model**，不会丢失原配置。
+- **Request format** 可选 **OpenAI**（Chat Completions）或 **Anthropic**（Messages），实际请求和解析按所选格式执行。OpenAI 使用 Bearer 认证，**Token limit field** 可选 `max_tokens` 或 `max_completion_tokens`；Anthropic 使用 `x-api-key`、`anthropic-version` 和顶层 system 字段，仅提取文本块，不把思考块写入提交信息。截断或未完成的响应会报错。
 - 默认关闭 AI。启用并保存设置后，先暂存文件，再点击 **COMMIT** 右侧 **AI Generate**。请求只发送暂存区的 Diff 与统计，不发送未暂存改动；返回结果填入摘要和描述，仍需手动检查并提交。生成中可 **Cancel AI**，错误不会清空现有草稿；暂存内容在请求期间变化时会拒绝过期结果。
-- AI 默认代理为空，直接连接；可在设置中填写代理地址，本机模型跳过代理。已保存的代理配置保持不变。接口使用 Chat Completions 兼容协议，远程使用 HTTPS，本机可使用 HTTP；API Base URL 也接受完整 `/chat/completions` 地址。
+- AI 默认代理为空，直接连接；可在设置中填写代理地址，本机模型跳过代理。已保存的代理配置保持不变。远程使用 HTTPS，本机可使用 HTTP；API Base URL 接受基础地址或完整 `/chat/completions`、`/messages` 地址。切换格式时需确保地址对应厂商支持的兼容接口，选择格式不会让服务端自动获得协议兼容能力。
 - 默认暂存 Diff 上限 65536 字节，超出时提示调整配置或减少暂存文件，不静默截断。调用会产生所选服务商的 API 用量。
-- 已打开仓库、当前仓库、主题和 AI 设置自动覆盖保存到 **`~/.easy_git`**（JSON）。采用临时文件替换，权限为 **0600**；API Key 明文保存在这个仅当前用户可读写的文件中。启动时恢复仓库和设置，关闭的仓库不再恢复；不存在的仓库会显示错误并保留路径，便于下次重试。
+- 窗口调整后自动保存宽度和高度，启动时恢复（最小 1080 × 720）。不保存窗口位置、最大化状态及分栏布局。
+- 窗口尺寸、已打开仓库、当前仓库、主题和 AI 设置自动覆盖保存到 **`~/.easy_git`**（JSON）。采用临时文件替换，权限为 **0600**；API Key 明文保存在这个仅当前用户可读写的文件中。启动时恢复仓库和设置，关闭的仓库不再恢复；不存在的仓库会显示错误并保留路径，便于下次重试。
 - 配置损坏时保留原文件并提示；在 Settings 保存可用当前设置覆盖。可用 `--config /tmp/example.easy_git` 指定测试配置，避免修改正式配置。
 
-预设接口参考：[DeepSeek](https://api-docs.deepseek.com/)、[Kimi K2.6](https://platform.kimi.com/docs/guide/kimi-k2-6-quickstart)、[Qwen 兼容接口](https://help.aliyun.com/zh/model-studio/model-calling-in-sub-workspace)、[豆包 Chat API](https://www.volcengine.com/docs/82379/1494384)。
+旧版未指定请求格式的配置继续使用 OpenAI 格式，兼容之前保存的自定义接口。
 
 ![浅色主题与生成的提交草稿](docs/ai-light-theme.png)
 
@@ -114,9 +117,9 @@ ctest --test-dir build --output-on-failure
 
 `git_workflows` 验证按行／区块暂存与取消暂存、特殊路径与文件末尾处理、冲突结果保存、Clone／初始化、删除本地／远端分支和强制推送 lease 保护。
 
-`settings_and_ai` 使用本地回环 HTTP 模拟服务验证 JSON 请求、Bearer 认证、仅暂存区内容、中文响应、HTTP/格式错误、取消请求、暂存区变化保护，以及配置覆盖保存、各服务商配置切换与重启恢复、旧配置迁移、0600 权限与损坏配置处理；不调用付费模型。运行此测试需要允许本机监听端口。
+`settings_and_ai` 使用本地回环 HTTP 模拟服务验证 OpenAI / Anthropic 两种 JSON 请求、对应认证头和响应解析、仅暂存区内容、中文响应、HTTP/格式错误、取消请求、暂存区变化保护，以及配置覆盖保存、各服务商配置切换与重启恢复、旧配置迁移、自定义模型增删与预设删除保护、窗口尺寸读写与非法值校验、0600 权限与损坏配置处理；不调用付费模型。运行此测试需要允许本机监听端口。
 
-`repository_tabs` 使用真实 ImGui 状态（无需 X 服务）验证标签点击、独立草稿与文件选择、切换期间的后台 Diff/暂存、相同根目录去重、关闭保护、文件树及 Diff 行号，以及 Stash / Discard 的仓库隔离、分支跨分页定位和提交图滚动、Ctrl / Shift / Ctrl+Shift 多选、连续点击的 Diff 更新、Tree 可见范围、筛选及批量暂存/取消暂存/丢弃、主题/模型配置与仓库重启恢复、AI 失败保留草稿。
+`repository_tabs` 使用真实 ImGui 状态（无需 X 服务）验证标签点击、独立草稿与文件选择、切换期间的后台 Diff/暂存、相同根目录去重、关闭保护、文件树及 Diff 行号，以及 Stash / Discard 的仓库隔离、分支跨分页定位和提交图滚动、Ctrl / Shift / Ctrl+Shift 多选、连续点击的 Diff 更新、Tree 可见范围、筛选及批量暂存/取消暂存/丢弃、主题/模型配置与仓库重启恢复、自定义模型增删的保存与取消、AI 失败保留草稿。
 
 无需图形依赖也可单独测试 Git 后端：
 
@@ -134,13 +137,13 @@ xvfb-run -a -s '-screen 0 1440x900x24' \
   --frames 30 --screenshot /tmp/easy-git.ppm
 ```
 
-`docs/` 的截图来自真实临时测试仓库。新版界面已用实际鼠标、键盘检查多仓库切换、草稿保留、单文件暂存、提交文件列表与 Diff、Path / Tree 切换及 1080×720 布局。Git 操作界面另验证了 Local / Remote / Stash 折叠、Stash 预览与 Apply / Delete、Cherry-pick 和 Hard Reset 的勾选保护及执行。新增分支定位检查使用 341 个提交验证跨页跳转及 Remote 定位；Discard 检查验证取消、确认及保留暂存内容；另用真实 Ctrl / Shift 按键和鼠标验证多选、Tree 折叠范围、批量暂存/丢弃及窄窗口工具栏。主题/AI 界面已验证中文生成结果填入、浅色与深色切换、设置编辑保存和重启后当前仓库恢复。
+`docs/` 的截图来自真实临时测试仓库。新版界面已用实际鼠标、键盘检查多仓库切换、草稿保留、单文件暂存、提交文件列表与 Diff、Path / Tree 切换及 1080×720 布局。Git 操作界面另验证了 Local / Remote / Stash 折叠、Stash 预览与 Apply / Delete、Cherry-pick 和 Hard Reset 的勾选保护及执行。新增分支定位检查使用 341 个提交验证跨页跳转及 Remote 定位；Discard 检查验证取消、确认及保留暂存内容；另用真实 Ctrl / Shift 按键和鼠标验证多选、Tree 折叠范围、批量暂存/丢弃及窄窗口工具栏。主题/AI 界面已验证中文生成结果填入、浅色与深色切换、设置编辑保存和重启后当前仓库恢复。窗口尺寸另经 Xvfb 实测：调整为 1220 × 780 后自动保存宽高，重启恢复相同尺寸；不保存窗口位置或分栏布局。
 
 ## 当前边界
 
 - 当前仅支持 Linux / X11（Wayland 桌面可通过 XWayland 运行），最低窗口尺寸为 1080×720；未实现 Windows/macOS 进程后端。
 - 合并提交展示相对第一父提交的 Diff；工作区支持整文件及按行/区块暂存；尚无交互式 Rebase 编辑器或拖拽提交。二进制冲突仅支持选用完整版本，符号链接和子模块冲突需在外部处理。
-- 仓库、当前仓库、主题和 AI 设置持久化；提交草稿、文件选择和面板布局仅保留在当前会话，退出后不恢复；外部修改需手动刷新。Clone、初始化、删除分支及带 lease 的强制推送已提供界面入口。
+- 窗口尺寸、仓库、当前仓库、主题和 AI 设置持久化；提交草稿、文件选择和面板布局仅保留在当前会话，退出后不恢复；外部修改需手动刷新。Clone、初始化、删除分支及带 lease 的强制推送已提供界面入口。
 - 单次 Git 命令超时 120 秒，输出预览上限 8 MiB。超限时明确报错，不显示不完整的仓库结构。
 - 远程操作已使用本地远程仓库验证；AI 请求使用本地模拟接口验证，尚未使用用户的 API Key 调用真实服务商。
 
