@@ -1,0 +1,143 @@
+# Easy Git
+
+**English** | [简体中文](README.zh-CN.md)
+
+A Linux desktop Git client built with **C++17 and Dear ImGui**, featuring commit graphs, multi-repository tabs, and optional AI commit messages.
+
+Easy Git takes inspiration from GitKraken's three-panel interface. It is an independent project and is not affiliated with or endorsed by GitKraken. The project is in early development and is available under the [MIT license](LICENSE).
+
+![Multiple repositories and working-tree files](docs/multiple-repositories.png)
+
+## Features
+
+- **Multiple repositories:** browse folders, open and reorder repository tabs, and restore open repositories on startup. Each tab keeps its own draft, selection, and view state during the session.
+- **Commit graph:** inspect branches, merges, commit details, and changed files. Clicking a local or remote branch scrolls to its tip, loading additional history when necessary.
+- **File workflow:** separate Unstaged and Staged panels, Path and Tree views, filtering, inline diffs with line numbers, Ctrl/Shift selection, batch staging, unstaging, and confirmed discard.
+- **Git operations:** commit, create and switch branches, create tags, fetch, fast-forward-only pull, push, cherry-pick, merge, revert, and soft/mixed/hard reset.
+- **Stash:** save tracked and untracked changes; click to preview, then use the context menu to apply or delete. Conflict operations expose Continue, Abort, and Skip where supported.
+- **Appearance:** light and dark themes, resizable panels, and collapsible Local, Remote, Tags, and Stash sections.
+- **Optional AI:** generate an editable commit draft from staged changes using DeepSeek, Kimi, Qwen, Doubao, or a custom Chat Completions compatible endpoint. Each provider keeps its own settings.
+
+## Build and run
+
+Requires Linux, Git, CMake 3.22+, a C++17 compiler, OpenGL, X11, libcurl, and json-c. On Ubuntu/Debian:
+
+```sh
+sudo apt install build-essential cmake ninja-build git libgl1-mesa-dev \
+  libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev \
+  fonts-dejavu-core fonts-noto-cjk zenity pkg-config libcurl4-openssl-dev libjson-c-dev
+
+git clone https://github.com/NickCyrusss/easy_git.git
+cd easy_git
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j 4
+./build/easy_git
+```
+
+Use **Browse...** to choose a repository, or pass one or more paths:
+
+```sh
+./build/easy_git /path/to/repository
+./build/easy_git /path/to/repository-a /path/to/repository-b
+```
+
+The folder picker uses Zenity. Manual path entry remains available when it is not installed. Paths inside a repository resolve to its root, and reopening the same root selects its existing tab.
+
+CMake downloads Dear ImGui **v1.92.5** and GLFW **3.4** with SHA-256 verification. For offline builds, set `FETCHCONTENT_SOURCE_DIR_IMGUI` and `FETCHCONTENT_SOURCE_DIR_GLFW` to local source directories, or place those versions in `.deps/imgui-1.92.5` and `.deps/glfw-3.4`.
+
+No proxy is required by default. If your network needs one for dependency downloads, set `https_proxy` and `http_proxy` before running CMake, for example to `http://127.0.0.1:32766`. The application's AI proxy is configured separately and defaults to an empty value (direct connection).
+
+## Everyday workflow
+
+1. Select **Working changes** or **// WIP** to inspect unstaged and staged files. Click a file to display its diff; use **< Commit graph** to return to history.
+2. Stage individual files or a selection. **Ctrl+click** toggles a file, **Shift+click** selects a range, and **Ctrl+Shift+click** adds a range. Tree selection follows visible directory order and skips collapsed entries.
+3. Enter a summary and optional description, then click **Commit changes**. Commits require staged changes and no unresolved conflicts. Configure your Git author identity before your first commit.
+4. Select a commit to browse **Changed Files**, or right-click a commit/branch for Git operations. Clicking a sidebar branch navigates to its tip; checkout is a separate action in the branch selector or context menu.
+5. Press **F5** to refresh after external changes. Git work runs asynchronously, and failures display the command error.
+
+**Discard** removes unstaged changes while preserving staged content; discarding untracked files deletes them. Confirmation lists the selected files. Conflicts, directories, and submodules require handling in an editor or their own repository.
+
+**Hard reset** requires an extra confirmation because it overwrites the index and working tree and can remove untracked paths that obstruct checkout. Soft reset keeps staged and working changes; mixed reset resets the index but keeps working files.
+
+Clicking a **Stash** only previews its files and diffs. **Apply** retains the stash and can restore the index; **Delete** asks for confirmation and rejects stale list positions. Resolve conflicts externally, stage the resolution, and use **Continue** when an operation is in progress. Stash-apply conflicts follow the normal stage-and-commit workflow.
+
+![Git operation menu](docs/git-operations.png)
+
+![Stash preview](docs/stash-preview.png)
+
+## Themes, AI, and saved settings
+
+The top-right **Light / Dark** button switches themes. **Settings** controls AI generation, which is disabled by default.
+
+1. Enable AI commit messages and choose **DeepSeek**, **Kimi**, **Qwen**, **Doubao**, or **Custom**.
+2. Set your API base URL, model/endpoint ID, and API key. You can also configure the proxy, output language, timeout, output token limit, diff size limit, and style instructions. Preset model IDs and URLs are editable for your account and region.
+3. Switch providers to restore their individual settings, including keys and customized model names. A provider's first selection uses its defaults. **Save settings** saves all profiles edited in the dialog; **Cancel** discards the dialog's edits.
+4. Stage your changes and click **AI Generate**, to the right of **COMMIT**. Review the returned summary and description before committing. Generation never commits automatically.
+
+Only the staged diff and its statistics are sent to the selected provider. Unstaged changes are excluded. The default diff limit is **65,536 bytes**; larger requests are rejected instead of silently truncated. **Cancel AI** cancels a request; failures preserve the draft, and results are rejected if the index changed during generation. Requests may incur charges from your provider.
+
+The HTTP interface uses Chat Completions compatible requests. Remote endpoints must use HTTPS; localhost endpoints may use HTTP and bypass the proxy. A base URL may also contain the complete `/chat/completions` path.
+
+Open repositories, the active repository, theme, and all AI profiles are saved to **`~/.easy_git`** as JSON and restored on startup. Saves replace the file atomically with **0600** permissions. API keys are stored as plaintext in this owner-only file. Existing single-provider configurations remain supported. A malformed file is preserved and reported until you explicitly save replacement settings.
+
+Use a separate configuration file for testing:
+
+```sh
+./build/easy_git --config /tmp/easy-git-test.json /path/to/repository
+```
+
+Git authentication uses your existing SSH configuration or credential helper. The application does not store Git credentials or prompt for terminal passwords. Git HTTP(S) operations inherit the process's proxy environment; SSH uses your SSH configuration.
+
+![Light theme and generated commit draft](docs/ai-light-theme.png)
+
+## Tests
+
+```sh
+ctest --test-dir build --output-on-failure
+```
+
+Tests create disposable repositories under `/tmp`:
+
+| Test | Coverage |
+| --- | --- |
+| `git_workflow` | Status, unusual paths, staging, commits, commit graphs, pagination, file diffs, stash, and local remote operations |
+| `git_operations` | Cherry-pick, merge, revert, reset modes, stash handling, conflict continuation/abort/skip, and discard protections |
+| `settings_and_ai` | Configuration replacement and permissions, provider switching and restart recovery, legacy migration, mock HTTP requests, cancellation, error handling, and stale-index protection |
+| `repository_tabs` | Headless ImGui interactions, independent tabs and drafts, branch navigation, file selections, batch operations, settings Save/Cancel, and restart recovery |
+
+AI tests use a local loopback HTTP server and require permission to listen on a local port. They do not call paid providers. Actual provider calls require your own API key and have not been validated by these tests.
+
+Build and test the backend without GUI dependencies:
+
+```sh
+cmake -S . -B build-core -DEASY_GIT_BUILD_GUI=OFF
+cmake --build build-core -j 4
+ctest --test-dir build-core --output-on-failure
+```
+
+Optional GUI smoke check, with `xvfb` and `xauth` installed:
+
+```sh
+xvfb-run -a -s '-screen 0 1440x900x24' \
+  ./build/easy_git /path/to/repository --config /tmp/easy-git-smoke.json \
+  --frames 30 --screenshot /tmp/easy-git.ppm
+```
+
+Screenshots in `docs/` come from the running application with temporary demonstration repositories.
+
+## Current limitations
+
+- Linux/X11 only; Wayland desktops require XWayland. The minimum window size is 1080×720. Windows and macOS process backends are not implemented.
+- File-level staging only. No line/hunk staging, conflict editor, interactive rebase, or commit drag-and-drop. Existing externally started rebases can be continued or aborted.
+- No clone, repository initialization, branch deletion, or force-push UI.
+- Merge diffs use the first parent. History loads in batches of 300; search covers loaded commits only, and graph edges are hidden while filtering.
+- Commit drafts, file selections, and panel layout last only for the current session. External changes require a refresh.
+- Git commands have a 120-second timeout and an 8 MiB output limit. Exceeding either reports an error rather than presenting incomplete results.
+
+## Contributing
+
+Issues and pull requests are welcome. Include your Linux distribution, reproduction steps, and relevant error messages in a [bug report](https://github.com/NickCyrusss/easy_git/issues). Do not include API keys, personal configuration files, or private repository content. Run the relevant tests for Git, settings, or AI changes, and describe how you checked any UI changes.
+
+## License and acknowledgments
+
+Easy Git is licensed under the [MIT license](LICENSE). Thanks to [Dear ImGui](https://github.com/ocornut/imgui), [GLFW](https://github.com/glfw/glfw), [libcurl](https://curl.se/libcurl/), [json-c](https://github.com/json-c/json-c), and [Git](https://git-scm.com/). Third-party projects retain their respective licenses.

@@ -1,0 +1,1 @@
+A Linux desktop Git client built with C++17 and Dear ImGui, featuring commit graphs, multi-repository tabs, and AI commit messages.

@@ -1,0 +1,9 @@
+/build*/
+/.deps/
+imgui.ini
+/.agents/
+/.codex/
+/.easy_git
+/.easy_git.tmp-*
+.env
+.env.*
