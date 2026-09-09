@@ -71,6 +71,8 @@ With no file selected, **Discard** targets all unstaged files in the repository,
 
 **Hard reset** requires an extra confirmation because it overwrites the index and working tree and can remove untracked paths that obstruct checkout. Soft reset keeps staged and working changes; mixed reset resets the index but keeps working files.
 
+The toolbar **Stash** button after **Pull / Push** immediately saves all staged, unstaged, and untracked changes in the active repository (excluding ignored files). It uses **Commit summary** as the stash message, or `Saved from easy git` when empty, and keeps the commit draft. The button is disabled when there are no changes, before the first commit, or while an operation is running.
+
 Clicking a **Stash** only previews its files and diffs. **Apply** retains the stash and can restore the index; **Delete** asks for confirmation and rejects stale list positions. Click a conflicted file to open the built-in editor, save its resolution, and use **Continue** when an operation is in progress. Stash-apply conflicts follow the normal stage-and-commit workflow.
 
 ![Git operation menu](docs/git-operations.png)
@@ -140,7 +142,7 @@ Tests create disposable repositories under `/tmp`:
 | `git_operations` | Cherry-pick, merge, revert, reset modes, stash handling, conflict continuation/abort/skip, and discard protections |
 | `git_workflows` | Partial staging/unstaging/discard, linked replacement lines and preserved line order, selection isolation and stale-preview rejection, conflict resolution, clone/init, local/remote branch deletion, and force-push lease rejection |
 | `settings_and_ai` | Configuration replacement and permissions, window-size round trips and validation, per-model settings and migration, custom model add/delete protection, OpenAI/Anthropic HTTP requests and responses, cancellation, and stale-index protection |
-| `repository_tabs` | Headless ImGui interactions, independent tabs and drafts, branch navigation, file selections, unselected row actions with mouse press/hold/release, Stage All/Unstage All without selection, batch operations, settings Save/Cancel including model add/delete, partial unstage, linked line selection with Ctrl/Shift and complete discard confirmation/cancellation, and restart recovery |
+| `repository_tabs` | Headless ImGui interactions, independent tabs and drafts, branch navigation, file selections, unselected row actions with mouse press/hold/release, Stage All/Unstage All without selection, toolbar Stash naming and saved content at 1080×720, batch operations, settings Save/Cancel including model add/delete, partial unstage, linked line selection with Ctrl/Shift and complete discard confirmation/cancellation, and restart recovery |
 
 AI tests use a local loopback HTTP server and require permission to listen on a local port. They do not call paid providers. Actual provider calls require your own API key and have not been validated by these tests.
 

@@ -78,14 +78,34 @@ int main() {
             std::string(b->message) == "Draft for B","Switching or refreshing overwrote commit drafts");
 
         eg::Git git_a(root_a.string()), git_b(root_b.string());
-        git_a.save_stash("Preview A"); a->load(root_a.string()); settle(app);
+        std::ofstream(root_a / "src/shared.txt",std::ios::app) << "unstaged extra\n";
+        std::ofstream(root_a / "untracked.txt") << "untracked stash content\n";
+        a->load(root_a.string()); settle(app); app.active = app.focus = a_id;
+        auto before_stash_index = git_a.checked({"write-tree"});
+        auto before_stash_b = git_b.checked({"status","--porcelain=v1","-z"});
+        io.DisplaySize = {1080,720}; frame(app); frame(app);
+        ImGuiWindow* toolbar = nullptr;
+        for (auto* window : GImGui->Windows)
+            if (window->Active && std::string(window->Name).find("/toolbar_") != std::string::npos) toolbar=window;
+        require(toolbar,"Toolbar missing");
+        float stash_x = toolbar->Pos.x + 285 + 180 + 150 + 70 + 64 + 64 + 5*ImGui::GetStyle().ItemSpacing.x + 32;
+        require(stash_x+32+ImGui::GetStyle().ItemSpacing.x+83 <= toolbar->ClipRect.Max.x,"Stash pushed Refresh outside compact toolbar");
+        io.AddMousePosEvent(stash_x,toolbar->Pos.y+ImGui::GetStyle().WindowPadding.y+18); frame(app);
+        io.AddMouseButtonEvent(0,true); frame(app); io.AddMouseButtonEvent(0,false); frame(app);
+        app.active = app.focus = b_id; settle(app); io.DisplaySize = {1440,900}; frame(app);
+        require(a->repo.stashes.size()==1 && a->repo.files.empty(),"Toolbar Stash did not save all changes");
+        require(a->repo.stashes[0].subject.find("Draft for A")!=std::string::npos && std::string(a->message)=="Draft for A", "Toolbar Stash lost summary name or commit draft");
+        require(git_a.checked({"rev-parse","stash@{0}^2^{tree}"})==before_stash_index &&
+                git_a.checked({"show","stash@{0}:src/shared.txt"}).find("unstaged extra")!=std::string::npos &&
+                git_a.checked({"show","stash@{0}^3:untracked.txt"})=="untracked stash content\n" &&
+                git_b.checked({"status","--porcelain=v1","-z"})==before_stash_b,"Toolbar Stash lost content or changed another repository");
         auto saved = a->repo.stashes.at(0);
         auto status_a = git_a.checked({"status","--porcelain=v1","-z"});
         auto status_b = git_b.checked({"status","--porcelain=v1","-z"});
         a->select_stash(saved); app.active = app.focus = b_id; settle(app);
-        require(a->stash_view && !a->workspace && a->pending_kind.empty() && a->changed_files.size() == 2,
+        require(a->stash_view && !a->workspace && a->pending_kind.empty() && a->changed_files.size() == 3,
             "Stash selection did not enter read-only file preview");
-        a->select_file(a->changed_files.back(),false); settle(app);
+        a->select_file(*std::find_if(a->changed_files.begin(),a->changed_files.end(),[](const auto& file) { return file.path=="src/shared.txt"; }),false); settle(app);
         require(a->detail.find("changed 仓库 A") != std::string::npos && !b->stash_view,
             "Stash diff missing or crossed repository tabs");
         require(git_a.checked({"status","--porcelain=v1","-z"}) == status_a &&

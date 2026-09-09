@@ -542,6 +542,7 @@ struct RepoTab {
 
     void header() {
         ImGui::BeginChild("toolbar", {0, 68}, ImGuiChildFlags_AlwaysUseWindowPadding);
+        bool compact = ImGui::GetContentRegionAvail().x < 1150;
         auto* draw = ImGui::GetWindowDrawList();
         auto p = ImGui::GetCursorScreenPos();
         draw->AddBezierCubic({p.x+8,p.y+29}, {p.x+8,p.y+14}, {p.x+30,p.y+26}, {p.x+30,p.y+9}, lane_colors[0], 2.5f);
@@ -554,9 +555,9 @@ struct RepoTab {
         ImGui::PushFont(body_font, 12); label("YOUR REPOSITORY, CONNECTED"); ImGui::PopFont();
         ImGui::EndGroup(); ImGui::SameLine(285);
         auto name = repo.root.empty() ? "Open repository" : "+ Open repository";
-        if (button((std::string(name) + "##open_repo").c_str(), !busy(), {200,36})) opening = true;
+        if (button((std::string(name) + "##open_repo").c_str(), !busy(), {compact ? 180.0f : 200.0f,36})) opening = true;
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", repo.root.empty() ? "Open a local Git repository" : repo.root.c_str());
-        ImGui::SameLine(); ImGui::SetNextItemWidth(180);
+        ImGui::SameLine(); ImGui::SetNextItemWidth(compact ? 150 : 180);
         ImGui::BeginDisabled(!idle());
         if (ImGui::BeginCombo("##branch", repo.branch.empty() ? "No branch" : repo.branch.c_str())) {
             for (const auto& ref : repo.refs) if (ref.full.rfind("refs/heads/",0) == 0) {
@@ -573,6 +574,13 @@ struct RepoTab {
             if (ImGui::MenuItem("Force push with lease...",nullptr,false,ready() && repo.has_head)) prepare_force_push();
             ImGui::EndPopup();
         }
+        ImGui::SameLine();
+        if (button("Stash",idle() && repo.has_head && !repo.files.empty(),{64,36})) {
+            std::string summary = message;
+            mutate("Stash",[summary](const eg::Git& git) { git.save_stash(summary); });
+        }
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip("Save all staged, unstaged and untracked changes (excluding ignored files).\nName: %s",message[0] ? message : "Saved from easy git");
         ImGui::SameLine(); if (button("Refresh", ready(), {83,36})) load(repo.root);
         ImGui::EndChild();
     }
