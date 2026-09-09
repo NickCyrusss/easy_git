@@ -28,7 +28,7 @@ struct Commit {
     std::vector<std::string> parents;
 };
 struct Ref { std::string full, name, id; };
-struct Stash { std::string ref, id, subject; };
+struct Stash { std::string ref, id, subject, author, date, parent; };
 struct Snapshot {
     std::string root, branch, operation;
     bool has_head = false, more = false;

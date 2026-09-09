@@ -32,6 +32,20 @@ int main() {
     unsigned char* pixels; int w,h; io.Fonts->GetTexDataAsRGBA32(&pixels,&w,&h);
     theme(); App app;
     try {
+        {
+            RepoTab tab;
+            for (const auto& id : {"new","middle","old"}) { eg::Commit c; c.id=id; tab.repo.commits.push_back(c); }
+            tab.repo.stashes = {{"stash@{0}","old-newer","","","","old"},
+                               {"stash@{1}","new-stash","","","","new"},
+                               {"stash@{2}","old-older","","","","old"},
+                               {"stash@{3}","unloaded-stash","","","","unloaded"}};
+            tab.rebuild_history();
+            std::vector<std::string> order;
+            for (const auto& c : tab.history_entries) order.push_back(c.id);
+            require(order==std::vector<std::string>{"new-stash","new","middle","old-newer","old-older","old"},"Stashes were not grouped next to their own base in stash order");
+            eg::Commit older; older.id="unloaded"; tab.repo.commits.push_back(older); tab.rebuild_history();
+            require(tab.history_entries[6].id=="unloaded-stash" && tab.history_entries[7].id=="unloaded", "Loading base history did not reveal its stash");
+        }
         for (const auto& root : {root_a,root_b}) {
             fs::create_directories(root / "src");
             eg::Git git(root.string()); git.checked({"init","--initial-branch=main"});
@@ -94,15 +108,40 @@ int main() {
         io.AddMouseButtonEvent(0,true); frame(app); io.AddMouseButtonEvent(0,false); frame(app);
         app.active = app.focus = b_id; settle(app); io.DisplaySize = {1440,900}; frame(app);
         require(a->repo.stashes.size()==1 && a->repo.files.empty(),"Toolbar Stash did not save all changes");
-        require(a->repo.stashes[0].subject.find("Draft for A")!=std::string::npos && std::string(a->message)=="Draft for A", "Toolbar Stash lost summary name or commit draft");
+        require(a->repo.stashes[0].subject.find("Draft for A")!=std::string::npos && !a->message[0] && std::string(a->description)=="Description A", "Toolbar Stash did not clear summary or damaged description");
         require(git_a.checked({"rev-parse","stash@{0}^2^{tree}"})==before_stash_index &&
                 git_a.checked({"show","stash@{0}:src/shared.txt"}).find("unstaged extra")!=std::string::npos &&
                 git_a.checked({"show","stash@{0}^3:untracked.txt"})=="untracked stash content\n" &&
                 git_b.checked({"status","--porcelain=v1","-z"})==before_stash_b,"Toolbar Stash lost content or changed another repository");
         auto saved = a->repo.stashes.at(0);
+        git_a.checked({"commit","--allow-empty","-m","Newer than stash base"});
+        a->load(root_a.string()); settle(app);
         auto status_a = git_a.checked({"status","--porcelain=v1","-z"});
         auto status_b = git_b.checked({"status","--porcelain=v1","-z"});
-        a->select_stash(saved); app.active = app.focus = b_id; settle(app);
+        require(a->history_entries.size()==a->repo.commits.size()+1 && a->history_entries[1].id==saved.id &&
+                a->history_entries[1].parents==std::vector<std::string>{saved.parent} &&
+                a->history_entries[2].id==saved.parent && a->history_entries[0].id==a->repo.commits[0].id &&
+                !saved.author.empty() && !saved.date.empty(),"Stash graph entry was not next to its base commit");
+        snprintf(a->search,sizeof(a->search),"stash@{0}"); a->filter();
+        require(a->matches==std::vector<int>{1},"Graph search omitted stash entry");
+        app.active = app.focus = a_id; frame(app); frame(app);
+        ImGuiTable* stash_table = nullptr;
+        for (auto* window : GImGui->Windows)
+            if (window->Active && window->ParentWindow && std::string(window->ParentWindow->Name)=="Easy Git" &&
+                std::string(window->Name).find("history_panel")!=std::string::npos)
+                stash_table=GImGui->Tables.GetByKey(window->GetID("history"));
+        require(stash_table,"Stash history table missing");
+        io.AddMousePosEvent(stash_table->Columns[0].MinX+35,stash_table->RowPosY1+17); frame(app);
+        io.AddMouseButtonEvent(0,true); frame(app); io.AddMouseButtonEvent(0,false); frame(app);
+        app.active = app.focus = b_id; settle(app);
+        require(a->stash_view && a->viewed_stash.id==saved.id && a->changed_files.size()==3,"Clicking graph stash did not open preview");
+        a->search[0]=0; a->filter();
+        snprintf(a->message,sizeof(a->message),"Draft for A");
+        a->mutate("Stash",[](const eg::Git&) { throw std::runtime_error("Simulated stash failure"); },false,true);
+        while (a->busy()) { frame(app); std::this_thread::sleep_for(std::chrono::milliseconds(5)); }
+        require(std::string(a->message)=="Draft for A" && !a->error.empty(),"Failed stash cleared summary");
+        a->error.clear();
+        a->select_stash(saved); settle(app);
         require(a->stash_view && !a->workspace && a->pending_kind.empty() && a->changed_files.size() == 3,
             "Stash selection did not enter read-only file preview");
         a->select_file(*std::find_if(a->changed_files.begin(),a->changed_files.end(),[](const auto& file) { return file.path=="src/shared.txt"; }),false); settle(app);
@@ -118,6 +157,7 @@ int main() {
 
         // A branch beyond the loaded page must be selected and scrolled into view, even from a filtered diff.
         auto first = git_a.read_commit("HEAD");
+        const auto navigation_history_size = a->repo.commits.size()+48;
         auto tree = git_a.checked({"rev-parse","HEAD^{tree}"}); tree.pop_back();
         auto head = first.id;
         for (int i = 0; i < 48; ++i) {
@@ -137,7 +177,7 @@ int main() {
         auto before_navigation = git_a.checked({"status","--porcelain=v1","-z"});
         a->navigate_ref(reference("refs/heads/old-local")); app.active = app.focus = b_id; settle(app);
         require(a->selected_commit == first.id && a->selected_ref == "refs/heads/old-local" && !a->show_diff &&
-            !a->workspace && !a->search[0] && a->repo.commits.size() == 49 && b->selected_ref.empty(),
+            !a->workspace && !a->search[0] && a->repo.commits.size() == navigation_history_size && b->selected_ref.empty(),
             "Branch navigation did not load/select the target or crossed repository tabs");
         app.active = app.focus = a_id; settle(app);
         bool scrolled = false;

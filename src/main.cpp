@@ -127,7 +127,7 @@ struct JobResult {
     std::string detail, message, error, folder, preview_file, navigation_ref;
     int history_limit = 0;
     bool preview_staged = false;
-    bool reload = false, clear_commit = false, folder_selection = false, commit_selection = false, stash_selection = false;
+    bool reload = false, clear_commit = false, clear_summary = false, folder_selection = false, commit_selection = false, stash_selection = false;
 };
 struct FileTree {
     std::map<std::string, FileTree> directories;
@@ -166,6 +166,7 @@ struct RepoTab {
     eg::File queued_preview;
 
     eg::Snapshot repo;
+    std::vector<eg::Commit> history_entries;
     std::vector<eg::GraphRow> graph;
     std::vector<int> matches;
     std::vector<DiffLine> detail_lines;
@@ -311,6 +312,18 @@ struct RepoTab {
         if (files.empty() || !ready()) return;
         pending_files = std::move(files); pending_discard_all = all; pending_kind = "discard files";
     }
+    void rebuild_history() {
+        history_entries.clear();
+        std::map<std::string,std::vector<const eg::Stash*>> by_parent;
+        for (const auto& stash : repo.stashes) by_parent[stash.parent].push_back(&stash);
+        for (const auto& commit : repo.commits) {
+            auto found = by_parent.find(commit.id);
+            if (found != by_parent.end()) for (const auto* stash : found->second)
+                history_entries.push_back({stash->id,stash->author,stash->date,stash->subject,stash->ref,{stash->parent}});
+            history_entries.push_back(commit);
+        }
+        graph = eg::layout_graph(history_entries); filter();
+    }
     void filter() {
         matches.clear();
         std::string query = search;
@@ -319,8 +332,8 @@ struct RepoTab {
             return s;
         };
         query = lower(query);
-        for (int i = 0; i < int(repo.commits.size()); ++i) {
-            const auto& c = repo.commits[i];
+        for (int i = 0; i < int(history_entries.size()); ++i) {
+            const auto& c = history_entries[i];
             if (query.empty() || lower(c.subject + c.author + c.id + c.refs).find(query) != std::string::npos)
                 matches.push_back(i);
         }
@@ -370,10 +383,11 @@ struct RepoTab {
             return r;
         });
     }
-    void mutate(std::string activity, std::function<void(const eg::Git&)> action, bool clear = false) {
+    void mutate(std::string activity, std::function<void(const eg::Git&)> action, bool clear = false, bool clear_summary = false) {
         auto root = repo.root; auto stop = cancel; int count = limit;
+        std::string summary = message;
         auto preview = workspace && show_diff ? selected_file : std::string(); bool staged = selected_staged;
-        launch(activity + "...", [root, stop, count, action, activity, clear, preview, staged] {
+        launch(activity + "...", [root, stop, count, action, activity, clear, clear_summary, summary, preview, staged] {
             eg::Git git(root, stop);
             JobResult r;
             try { action(git); }
@@ -392,7 +406,8 @@ struct RepoTab {
                 r.error += std::string("\nRefresh failed: ") + e.what();
             }
             r.message = r.error.empty() ? activity + " completed" : activity + " failed; review the error";
-            r.clear_commit = clear && r.error.empty(); return r;
+            r.clear_commit = clear && r.error.empty();
+            r.clear_summary = clear_summary && r.error.empty(); r.original_summary = summary; return r;
         });
     }
     void command(std::string activity, std::vector<std::string> args) {
@@ -427,7 +442,8 @@ struct RepoTab {
                 bool keep_preview = show_diff;
                 clear_file_selection();
                 just_opened = repo.root.empty();
-                repo = std::move(r.snapshot); graph = eg::layout_graph(repo.commits); filter();
+                repo = std::move(r.snapshot);
+                rebuild_history();
                 selected_file.clear(); selected_commit.clear(); set_detail(""); workspace = true; show_diff = false;
                 changed_files.clear(); commit_body.clear(); stash_view = false; viewed_stash = {}; rebuild_file_lists();
                 selected_ref.clear(); scroll_to_commit.clear();
@@ -448,6 +464,7 @@ struct RepoTab {
                 changed_files = std::move(r.files); commit_body = std::move(r.detail); rebuild_file_lists();
             }
             if (r.clear_commit) { message[0] = 0; description[0] = 0; }
+            if (r.clear_summary && r.original_summary == message) message[0] = 0;
             status = r.message;
             error = r.error;
         } catch (const std::exception& e) {
@@ -577,7 +594,7 @@ struct RepoTab {
         ImGui::SameLine();
         if (button("Stash",idle() && repo.has_head && !repo.files.empty(),{64,36})) {
             std::string summary = message;
-            mutate("Stash",[summary](const eg::Git& git) { git.save_stash(summary); });
+            mutate("Stash",[summary](const eg::Git& git) { git.save_stash(summary); },false,true);
         }
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
             ImGui::SetTooltip("Save all staged, unstaged and untracked changes (excluding ignored files).\nName: %s",message[0] ? message : "Saved from easy git");
@@ -640,12 +657,7 @@ struct RepoTab {
                     ImGui::GetColorU32(ImGuiCol_Text),{pos.x+ImGui::GetContentRegionAvail().x,pos.y+26});
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s\n%s\nClick to preview",stash.ref.c_str(),stash.subject.c_str());
                 if (ImGui::BeginPopupContextItem()) {
-                    if (ImGui::MenuItem("Apply...",nullptr,false,idle())) {
-                        pending_stash = stash; pending_kind = "apply stash"; restore_index = false;
-                    }
-                    if (ImGui::MenuItem("Delete...",nullptr,false,ready())) {
-                        pending_stash = stash; pending_kind = "delete stash";
-                    }
+                    stash_actions(stash);
                     ImGui::EndPopup();
                 }
                 ImGui::PopID();
@@ -654,6 +666,14 @@ struct RepoTab {
             if (button("Stash changes",idle() && repo.has_head && !repo.files.empty(),{-1,0})) {
                 new_kind = "stash"; new_name[0] = 0;
             }
+        }
+    }
+    void stash_actions(const eg::Stash& stash) {
+        if (ImGui::MenuItem("Apply...",nullptr,false,idle())) {
+            pending_stash = stash; pending_kind = "apply stash"; restore_index = false;
+        }
+        if (ImGui::MenuItem("Delete...",nullptr,false,ready())) {
+            pending_stash = stash; pending_kind = "delete stash";
         }
     }
     void request_operation(const std::string& kind, const eg::Commit& commit) {
@@ -683,11 +703,11 @@ struct RepoTab {
     }
     void history() {
         ImGui::PushFont(body_font, 22); ImGui::TextUnformatted("Commit graph"); ImGui::PopFont();
-        ImGui::SameLine(); ImGui::TextColored(muted, "  %zu commits", repo.commits.size());
+        ImGui::SameLine(); ImGui::TextColored(muted, "  %zu commits / %zu stashes", repo.commits.size(),repo.stashes.size());
         ImGui::SetNextItemWidth(-1);
-        if (ImGui::InputTextWithHint("##search", "Search loaded commits, authors, refs or SHA...", search, sizeof(search))) filter();
+        if (ImGui::InputTextWithHint("##search", "Search commits, stashes, authors, refs or SHA...", search, sizeof(search))) filter();
         if (search[0]) label("Filtered results: graph hidden to avoid false connections.");
-        else label("All branches  /  newest first");
+        else label("All branches  /  stashes beside their base commits");
         ImGui::Spacing();
         if (ImGui::Selectable(("// WIP    " + std::to_string(repo.files.size()) + " file changes").c_str(),
             workspace, 0, {0, 30})) select_workspace();
@@ -708,12 +728,14 @@ struct RepoTab {
             ImGui::TableHeadersRow();
             ImGuiListClipper clipper; clipper.Begin(int(matches.size()), row_height);
             if (!scroll_to_commit.empty()) {
-                auto target = std::find_if(matches.begin(),matches.end(),[&](int i) { return repo.commits[i].id == scroll_to_commit; });
+                auto target = std::find_if(matches.begin(),matches.end(),[&](int i) { return history_entries[i].id == scroll_to_commit; });
                 if (target != matches.end()) clipper.IncludeItemByIndex(int(target-matches.begin()));
             }
             while (clipper.Step()) for (int n = clipper.DisplayStart; n < clipper.DisplayEnd; ++n) {
-                int i = matches[n]; const auto& c = repo.commits[i];
-                ImGui::PushID(c.id.c_str());
+                int i = matches[n]; const auto& c = history_entries[i];
+                auto saved = std::find_if(repo.stashes.begin(),repo.stashes.end(),[&](const auto& s) { return s.id == c.id && s.ref == c.refs; });
+                const eg::Stash* stash = saved == repo.stashes.end() ? nullptr : &*saved;
+                ImGui::PushID(stash ? stash->ref.c_str() : c.id.c_str());
                 ImGui::TableNextRow(0,row_height);
                 int col = 0;
                 if (!search[0]) {
@@ -724,16 +746,19 @@ struct RepoTab {
                 ImGui::TableSetColumnIndex(col++);
                 auto p = ImGui::GetCursorScreenPos();
                 float width = ImGui::GetContentRegionAvail().x;
-                if (ImGui::Selectable("##commit", selected_commit == c.id, ImGuiSelectableFlags_SpanAllColumns,
-                    {0,row_height}) && !busy()) select_commit(c);
+                if (ImGui::Selectable("##commit", stash ? stash_view && viewed_stash.id == c.id : selected_commit == c.id, ImGuiSelectableFlags_SpanAllColumns,
+                    {0,row_height}) && !busy()) { if (stash) select_stash(*stash); else select_commit(c); }
                 if (scroll_to_commit == c.id) {
                     ImGui::SetScrollHereY(0.5f); ImGui::SetScrollX(0); scroll_to_commit.clear();
                 }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s\n%s\n%s", c.subject.c_str(), c.refs.c_str(), c.id.c_str());
                 if (ImGui::BeginPopupContextItem()) {
-                    if (ImGui::MenuItem("Copy commit SHA")) ImGui::SetClipboardText(c.id.c_str());
-                    if (ImGui::MenuItem("View commit", nullptr, false, !busy())) select_commit(c);
-                    ImGui::Separator(); commit_actions(c);
+                    if (stash) stash_actions(*stash);
+                    else {
+                        if (ImGui::MenuItem("Copy commit SHA")) ImGui::SetClipboardText(c.id.c_str());
+                        if (ImGui::MenuItem("View commit", nullptr, false, !busy())) select_commit(c);
+                        ImGui::Separator(); commit_actions(c);
+                    }
                     ImGui::EndPopup();
                 }
                 auto* draw = ImGui::GetWindowDrawList();
@@ -1352,7 +1377,7 @@ struct RepoTab {
                 std::string name = new_name;
                 if (new_kind == "branch") command("Create branch",{"switch","-c",name});
                 else if (new_kind == "tag") command("Create tag",{"tag","--",name});
-                else mutate("Stash",[name](const eg::Git& git) { git.save_stash(name); });
+                else mutate("Stash",[name](const eg::Git& git) { git.save_stash(name); },false,true);
                 new_kind.clear(); ImGui::CloseCurrentPopup();
             }
             ImGui::SameLine(); if (button("Cancel")) { new_kind.clear(); ImGui::CloseCurrentPopup(); }

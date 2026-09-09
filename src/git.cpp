@@ -244,10 +244,12 @@ Snapshot Git::load(int limit) const {
         s.more = int(s.commits.size()) > limit;
         if (s.more) s.commits.resize(limit);
     }
-    auto stash = repo.checked({"stash", "list", "-z", "--format=%gd%x00%H%x00%s"});
+    auto stash = repo.checked({"stash", "list", "-z", "--format=%gd%x00%H%x00%s%x00%an%x00%aI%x00%P"});
     size_t pos = 0;
     while (pos < stash.size()) {
         Stash entry; entry.ref = field(stash,pos); entry.id = field(stash,pos); entry.subject = field(stash,pos);
+        entry.author = field(stash,pos); entry.date = field(stash,pos);
+        auto parents = field(stash,pos); entry.parent = parents.substr(0,parents.find(' '));
         s.stashes.push_back(std::move(entry));
     }
     return s;
