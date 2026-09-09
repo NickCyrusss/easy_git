@@ -259,10 +259,14 @@ int main() {
         editor.choose_conflict_block(1);
         require(std::string(editor.resolution.data()) == "before\nours\ntheirs >>>>>>> inline\nafter\nright\n","Conflict choices did not preserve context");
         editor.set_detail("diff --git a/file b/file\n@@ -1,2 +1,2 @@\n-old\n+new\n same\n");
-        editor.pick_line(2,false,false); editor.pick_line(3,false,true);
+        editor.pick_line(2,false,false);
+        require(editor.selected_lines.size() == 2,"Selecting old line did not include replacement");
+        editor.pick_line(3,false,true);
         require(editor.selected_lines.size() == 2,"Shift did not select changed diff lines");
         editor.pick_line(2,true,false);
-        require(editor.selected_lines.size() == 1 && editor.selected_lines.count(3),"Ctrl did not toggle a diff line");
+        require(editor.selected_lines.empty(),"Ctrl did not toggle both replacement lines");
+        editor.pick_line(3,true,false);
+        require(editor.selected_lines.size() == 2,"Selecting new line did not include old line");
         editor.set_detail("refreshed"); require(editor.selected_lines.empty(),"Diff refresh retained stale line selections");
         auto* partial = restored.tabs[0].get();
         std::string original; for (int i=0;i<30;++i) original += "line " + std::to_string(i) + "\n";
@@ -292,7 +296,9 @@ int main() {
         };
         confirm_discard(false);
         require(git_b.checked({"diff","--","partial.txt"}).find("FIRST")!=std::string::npos,"Cancel discarded working edits");
-        partial->request_discard_lines(chosen_lines,true); frame(restored); frame(restored); confirm_discard(true);
+        partial->request_discard_lines({chosen_lines.back()}); frame(restored); frame(restored);
+        require(partial->pending_diff_lines.size()==2,"Discard single replacement line did not confirm both sides");
+        confirm_discard(true);
         require(git_b.checked({"diff","--","partial.txt"}).empty() && git_b.checked({"show",":partial.txt"})==index_content,"Discard hunk changed staged content or kept discarded edits");
         std::ofstream(root_b / "action.txt") << "stage without selecting\n";
         partial->load(root_b.string()); settle(restored); partial->select_workspace();

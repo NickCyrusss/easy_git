@@ -53,9 +53,30 @@ struct Entry { std::string mode, oid; };
 Entry index_entry(const std::string& listing) {
     Entry e; std::istringstream stream(listing); stream >> e.mode >> e.oid; return e;
 }
+struct Replacement { std::vector<int> removed, added; };
+std::vector<Replacement> replacements(const std::vector<std::string>& patch) {
+    std::vector<Replacement> result; Replacement block; bool hunk = false;
+    auto flush = [&] {
+        if (!block.removed.empty() && !block.added.empty()) result.push_back(std::move(block));
+        block = {};
+    };
+    for (int i = 0; i < int(patch.size()); ++i) {
+        const auto& row = patch[i];
+        if (row.rfind("@@ ",0) == 0) { flush(); hunk = true; }
+        else if (hunk && !row.empty() && (row[0] == '-' || row[0] == '+')) {
+            if (row[0] == '-' && !block.added.empty()) flush();
+            (row[0] == '-' ? block.removed : block.added).push_back(i);
+        } else if (row.rfind("\\ No newline",0) != 0) {
+            flush();
+            if (row.empty() || row[0] != ' ') hunk = false;
+        }
+    }
+    flush(); return result;
+}
 std::string selected_content(const std::string& baseline,const std::string& preview,const std::vector<int>& selected,bool reverse) {
     auto original = lines(baseline), patch = lines(preview);
-    std::set<int> selection(selected.begin(),selected.end());
+    auto expanded = expand_line_selection(preview,selected);
+    std::set<int> selection(expanded.begin(),expanded.end());
     if (selection.empty()) throw std::runtime_error("Select added or removed lines.");
     std::string result; size_t cursor = 0; bool hunk = false; int used = 0;
     auto append = [&](const std::string& line) {
@@ -63,7 +84,18 @@ std::string selected_content(const std::string& baseline,const std::string& prev
             throw std::runtime_error("This selection joins lines without a final newline. Select the complete replacement hunk.");
         result += line;
     };
-    for (int i = 0; i < int(patch.size()); ++i) {
+    std::vector<int> order;
+    for (int i = 0; i < int(patch.size()); ++i) order.push_back(i);
+    // Apply paired replacements in file order, retaining unselected neighbors in place.
+    for (const auto& block : replacements(patch)) if (block.removed.size() == block.added.size()) {
+        auto positions = block.removed;
+        positions.insert(positions.end(),block.added.begin(),block.added.end());
+        for (size_t i = 0; i < block.removed.size(); ++i) {
+            order[positions[2*i]] = block.removed[i];
+            order[positions[2*i+1]] = block.added[i];
+        }
+    }
+    for (int i : order) {
         auto row = patch[i];
         if (row.rfind("@@ ",0) == 0) {
             int start = 0, count = 1; auto offset = reverse ? row.find(" +") : row.find(" -");
@@ -100,6 +132,23 @@ std::pair<std::string,std::string> remote_branch(const Git& git,const Ref& ref) 
     if (best.empty() || name.substr(best.size()+1) == "HEAD") throw std::runtime_error("Select a remote branch, not a symbolic remote HEAD.");
     return {best,"refs/heads/"+name.substr(best.size()+1)};
 }
+}
+std::vector<int> expand_line_selection(const std::string& preview,const std::vector<int>& selected) {
+    std::set<int> selection(selected.begin(),selected.end());
+    for (const auto& block : replacements(lines(preview))) {
+        const auto& removed = block.removed;
+        const auto& added = block.added;
+        if (removed.size() == added.size()) {
+            for (size_t i = 0; i < removed.size(); ++i)
+                if (selection.count(removed[i]) || selection.count(added[i])) {
+                    selection.insert(removed[i]); selection.insert(added[i]);
+                }
+        } else if (std::any_of(removed.begin(),removed.end(),[&](int i) { return selection.count(i); }) ||
+                   std::any_of(added.begin(),added.end(),[&](int i) { return selection.count(i); })) {
+            selection.insert(removed.begin(),removed.end()); selection.insert(added.begin(),added.end());
+        }
+    }
+    return {selection.begin(),selection.end()};
 }
 void Git::stage_lines(const File& file,bool unstage,const std::string& preview,const std::vector<int>& selected) const {
     if (file.conflicted() || !file.original.empty()) throw std::runtime_error("Resolve conflicts or stage renames as a whole file first.");

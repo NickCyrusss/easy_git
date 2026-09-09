@@ -788,9 +788,13 @@ struct RepoTab {
             for (int i = std::min(index,line_anchor); i <= std::max(index,line_anchor); ++i)
                 if (changed_line(i)) selected_lines.insert(i);
         } else {
-            if (ctrl && selected_lines.count(index)) selected_lines.erase(index); else selected_lines.insert(index);
+            auto linked = eg::expand_line_selection(detail,{index});
+            bool remove = ctrl && selected_lines.count(index);
+            for (int i : linked) { if (remove) selected_lines.erase(i); else selected_lines.insert(i); }
             line_anchor = index;
         }
+        auto linked = eg::expand_line_selection(detail,{selected_lines.begin(),selected_lines.end()});
+        selected_lines = {linked.begin(),linked.end()};
     }
     void stage_diff_lines(std::vector<int> selection) {
         auto found = std::find_if(repo.files.begin(),repo.files.end(),[&](const auto& f) { return f.path == selected_file; });
@@ -813,7 +817,7 @@ struct RepoTab {
         if (!partial_available() || selected_staged || selection.empty()) return;
         auto found = std::find_if(repo.files.begin(),repo.files.end(),[&](const auto& f) { return f.path == selected_file; });
         if (found == repo.files.end()) return;
-        pending_files = {*found}; pending_diff = detail; pending_diff_lines = std::move(selection);
+        pending_files = {*found}; pending_diff = detail; pending_diff_lines = eg::expand_line_selection(detail,selection);
         pending_kind = hunk ? "discard hunk" : "discard lines";
     }
     void set_resolution(const std::string& text) {

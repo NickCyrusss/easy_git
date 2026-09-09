@@ -81,6 +81,8 @@ Clicking a **Stash** only previews its files and diffs. **Apply** retains the st
 
 In a working-tree diff, click changed lines to select them, use Ctrl/Shift to adjust the selection, then click **Stage lines** or right-click **Stage selected lines**. Each `@@` header has a **Stage hunk** button. Open a file from **Staged Files** to use **Unstage lines** or **Unstage hunk**. Stage/Unstage changes only the index and rejects stale previews. Binary files, symlinks, submodules, and renames use whole-file operations.
 
+For replacements, selecting either the old or new line selects both for Stage, Unstage, and Discard. Consecutive replacements with equal old/new line counts pair by position; unequal counts select the whole continuous replacement block. Pure additions/deletions remain individually selectable. Highlighting and Discard confirmation show the full selection.
+
 Open a file from **Unstaged Files** to select changed lines and click **Discard lines** (also available in the right-click menu), or use **Discard hunk** beside a `@@` header. Confirmation lists the selected lines. Discard reverses only those working-tree edits, preserves staged content and other changes, and rejects a changed preview. Partial discard supports regular text files up to 1 MiB; discarding all lines of an untracked file removes it. Discarded edits cannot be undone in the app.
 
 Click a conflicted file to open **Resolve conflict**. The upper panels show ours (index stage 2) and theirs (stage 3); the lower result can be edited directly. Choose **Use ours**, **Use theirs**, or **Use both** for each conflict block, or choose an entire version. A missing version offers **Accept deletion**; binary conflicts support entire-version selection only. **Save and mark resolved** writes and stages the result without committing. Unresolved markers or externally changed files prevent saving. The editor supports regular files up to 1 MiB. During rebase, ours/theirs follow Git's stage semantics, as explained in the dialog.
@@ -136,9 +138,9 @@ Tests create disposable repositories under `/tmp`:
 | --- | --- |
 | `git_workflow` | Status, unusual paths, staging, commits, commit graphs, pagination, file diffs, stash, and local remote operations |
 | `git_operations` | Cherry-pick, merge, revert, reset modes, stash handling, conflict continuation/abort/skip, and discard protections |
-| `git_workflows` | Partial staging/unstaging/discard, selection isolation and stale-preview rejection, conflict resolution, clone/init, local/remote branch deletion, and force-push lease rejection |
+| `git_workflows` | Partial staging/unstaging/discard, linked replacement lines and preserved line order, selection isolation and stale-preview rejection, conflict resolution, clone/init, local/remote branch deletion, and force-push lease rejection |
 | `settings_and_ai` | Configuration replacement and permissions, window-size round trips and validation, per-model settings and migration, custom model add/delete protection, OpenAI/Anthropic HTTP requests and responses, cancellation, and stale-index protection |
-| `repository_tabs` | Headless ImGui interactions, independent tabs and drafts, branch navigation, file selections, unselected row actions with mouse press/hold/release, Stage All/Unstage All without selection, batch operations, settings Save/Cancel including model add/delete, partial unstage and discard confirmation/cancellation, and restart recovery |
+| `repository_tabs` | Headless ImGui interactions, independent tabs and drafts, branch navigation, file selections, unselected row actions with mouse press/hold/release, Stage All/Unstage All without selection, batch operations, settings Save/Cancel including model add/delete, partial unstage, linked line selection with Ctrl/Shift and complete discard confirmation/cancellation, and restart recovery |
 
 AI tests use a local loopback HTTP server and require permission to listen on a local port. They do not call paid providers. Actual provider calls require your own API key and have not been validated by these tests.
 

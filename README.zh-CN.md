@@ -103,6 +103,8 @@ ImGui 固定为 `v1.92.5`，GLFW 固定为 `3.4`，首次配置时由 CMake 下�
 
 ## 按行／区块暂存、丢弃与冲突编辑器
 
+替换修改选中旧行或新行任意一侧时，两侧会联动选择并一起 Stage／Unstage／Discard。连续替换段的新旧行数相同时按位置配对；行数不同时联动整个连续替换段。纯新增／删除仍可逐行操作。高亮选区和 Discard 确认框均显示完整操作范围。
+
 - 工作区 Diff 点击增删行进行选择，支持 Ctrl 切换、Shift 范围选择；点击 **Stage lines** 或右键 **Stage selected lines** 暂存所选行，每个 `@@` 区块有 **Stage hunk**。从 **Staged Files** 打开已暂存 Diff，可点击 **Unstage lines** 或 **Unstage hunk** 按行／区块取消暂存。操作只修改暂存区，预览过期时拒绝执行。二进制、符号链接、子模块及重命名使用整文件操作。
 - 从 **Unstaged Files** 打开 Diff，选中增删行后点击 **Discard lines** 或右键 **Discard selected lines...**；也可点击 `@@` 旁的 **Discard hunk**。确认框列出将丢弃的行，仅撤销所选未暂存改动，保留暂存内容和其他改动；预览变化时拒绝执行。支持最大 1 MiB 的普通文本文件；丢弃未跟踪文件的所有行会删除该文件，丢弃后无法在应用中撤销。
 - 点击冲突文件打开 **Resolve conflict**：上方对照 ours（索引 stage 2）与 theirs（stage 3），下方编辑结果。每个冲突区块可 **Use ours / Use theirs / Use both**，也可选择完整版本；某侧删除了文件时可 **Accept deletion**。二进制冲突支持选择完整版本。**Save and mark resolved** 保存并暂存结果，不自动提交；未清理冲突标记或文件已被外部修改时拒绝保存。编辑器支持最大 1 MiB 的普通文件；Rebase 中 ours/theirs 的含义遵循 Git 索引阶段，窗口内有说明。
@@ -128,11 +130,11 @@ ctest --test-dir build --output-on-failure
 
 `git_operations` 验证 Cherry-pick / Merge / Revert、合并提交主线选择、三种 Reset、Stash 只读预览与未跟踪文件、恢复暂存状态、过期删除保护，以及真实冲突的继续、中止和跳过、外部 Rebase 中止、独立 Worktree 的操作状态，以及 Discard 对部分暂存、删除、重命名、特殊路径、符号链接和过期状态的处理，以及批量 Discard 的整组选中文件检查和暂存内容保留。
 
-`git_workflows` 验证按行／区块暂存、取消暂存及丢弃、选区隔离与过期预览拒绝、特殊路径与文件末尾处理、冲突结果保存、Clone／初始化、删除本地／远端分支和强制推送 lease 保护。
+`git_workflows` 验证按行／区块暂存、取消暂存及丢弃、替换行联动与连续修改的行顺序、新旧行数不等的替换段整体处理、选区隔离与过期预览拒绝、特殊路径与文件末尾处理、冲突结果保存、Clone／初始化、删除本地／远端分支和强制推送 lease 保护。
 
 `settings_and_ai` 使用本地回环 HTTP 模拟服务验证 OpenAI / Anthropic 两种 JSON 请求、对应认证头和响应解析、仅暂存区内容、中文响应、HTTP/格式错误、取消请求、暂存区变化保护，以及配置覆盖保存、各服务商配置切换与重启恢复、旧配置迁移、自定义模型增删与预设删除保护、窗口尺寸读写与非法值校验、0600 权限与损坏配置处理；不调用付费模型。运行此测试需要允许本机监听端口。
 
-`repository_tabs` 使用真实 ImGui 状态（无需 X 服务）验证标签点击、独立草稿与文件选择、切换期间的后台 Diff/暂存、相同根目录去重、关闭保护、文件树及 Diff 行号，以及 Stash / Discard 的仓库隔离、分支跨分页定位和提交图滚动、Ctrl / Shift / Ctrl+Shift 多选、连续点击的 Diff 更新、Tree 可见范围、筛选及批量暂存/取消暂存/丢弃、未选中文件时行内按钮的按下／保持／释放、无选区 Stage All／Unstage All、主题/模型配置与仓库重启恢复、自定义模型增删的保存与取消、区块取消暂存和丢弃确认／取消、AI 失败保留草稿。
+`repository_tabs` 使用真实 ImGui 状态（无需 X 服务）验证标签点击、独立草稿与文件选择、切换期间的后台 Diff/暂存、相同根目录去重、关闭保护、文件树及 Diff 行号，以及 Stash / Discard 的仓库隔离、分支跨分页定位和提交图滚动、Ctrl / Shift / Ctrl+Shift 多选、连续点击的 Diff 更新、Tree 可见范围、筛选及批量暂存/取消暂存/丢弃、未选中文件时行内按钮的按下／保持／释放、无选区 Stage All／Unstage All、主题/模型配置与仓库重启恢复、自定义模型增删的保存与取消、区块取消暂存、替换行 Ctrl／Shift 联动选择及完整丢弃范围的确认／取消、AI 失败保留草稿。
 
 无需图形依赖也可单独测试 Git 后端：
 

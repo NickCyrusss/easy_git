@@ -27,12 +27,31 @@ int main() {
         write(repo/"file.txt","one\ntwo\nthree\n"); git.stage({"file.txt"}); git.commit("base");
         write(repo/"file.txt","ONE\ntwo\nTHREE\n"); auto f=file(git,"file.txt"); auto patch=git.diff(f,false);
         auto selection=changes(patch,"one"); auto plus=changes(patch,"ONE"); selection.insert(selection.end(),plus.begin(),plus.end());
-        git.stage_lines(f,false,patch,selection);
+        git.stage_lines(f,false,patch,changes(patch,"ONE"));
         require(git.checked({"show",":file.txt"})=="ONE\ntwo\nthree\n","Selected replacement staged other lines");
         require(read(repo/"file.txt")=="ONE\ntwo\nTHREE\n","Partial staging changed working file");
         rejects([&]{git.stage_lines(f,false,patch,selection);});
-        f=file(git,"file.txt"); patch=git.diff(f,true); git.stage_lines(f,true,patch,changes(patch));
+        f=file(git,"file.txt"); patch=git.diff(f,true); git.stage_lines(f,true,patch,changes(patch,"one"));
         require(git.checked({"show",":file.txt"})=="one\ntwo\nthree\n","Partial unstage failed");
+        // Adjacent replacements stay individually selectable; unequal replacements are atomic.
+        for (bool unequal : {false,true}) {
+            const std::string base="old1\nold2\ncontext\ntail\n";
+            const std::string edited="new1\nnew2\n" + std::string(unequal ? "extra\n" : "") + "context\nTAIL\n";
+            write(repo/"linked.txt",base); git.stage({"linked.txt"}); if (!unequal) git.commit("linked base");
+            write(repo/"linked.txt",edited); f=file(git,"linked.txt"); patch=git.diff(f,false);
+            auto linked=eg::expand_line_selection(patch,changes(patch,"new1"));
+            require(linked.size()==(unequal ? 5u : 2u),"Replacement selection crossed a context boundary or paired unrelated lines");
+            git.stage_lines(f,false,patch,changes(patch,"new1"));
+            const std::string staged_linked=unequal ? "new1\nnew2\nextra\ncontext\ntail\n" : "new1\nold2\ncontext\ntail\n";
+            require(git.checked({"show",":linked.txt"})==staged_linked && read(repo/"linked.txt")==edited,"Linked stage changed wrong lines");
+            f=file(git,"linked.txt"); patch=git.diff(f,true);
+            git.stage_lines(f,true,patch,changes(patch,"old1"));
+            require(git.checked({"show",":linked.txt"})==base,"Linked unstage left half a replacement");
+            auto index_before=git.checked({"write-tree"}); f=file(git,"linked.txt"); patch=git.diff(f,false);
+            git.discard_lines(f,patch,changes(patch,"old1"));
+            require(read(repo/"linked.txt")== (unequal ? "old1\nold2\ncontext\nTAIL\n" : "old1\nnew2\ncontext\nTAIL\n") &&
+                    git.checked({"write-tree"})==index_before,"Linked discard damaged other edits or index");
+        }
         std::string many; for(int i=0;i<30;++i) many += "line "+std::to_string(i)+"\n";
         write(repo/"hunks.txt",many); git.stage({"hunks.txt"}); git.commit("hunks");
         auto edited=many; edited.replace(edited.find("line 1\n"),7,"FIRST\n"); edited.replace(edited.find("line 28\n"),8,"LAST\n"); write(repo/"hunks.txt",edited);
@@ -49,9 +68,7 @@ int main() {
         f=file(git,name); patch=git.diff(f,true); git.stage_lines(f,true,patch,changes(patch)); require(git.checked({"show",":"+name})=="alpha\nbeta","Unstage deletion failed");
         write(repo/"eof.txt","old"); git.stage({"eof.txt"}); git.commit("EOF base");
         write(repo/"eof.txt","new"); f=file(git,"eof.txt"); patch=git.diff(f,false);
-        rejects([&]{git.stage_lines(f,false,patch,changes(patch,"new"));});
-        require(git.checked({"show",":eof.txt"})=="old","Rejected EOF selection changed the index");
-        git.stage_lines(f,false,patch,changes(patch)); require(git.checked({"show",":eof.txt"})=="new","EOF replacement hunk failed");
+        git.stage_lines(f,false,patch,changes(patch,"new")); require(git.checked({"show",":eof.txt"})=="new","EOF replacement did not include old line");
         fs::path unborn=root/"unborn"; eg::Git::initialize(unborn.string(),"main"); eg::Git fresh(unborn.string());
         write(unborn/"new.txt","first\nsecond\n"); f=file(fresh,"new.txt"); patch=fresh.diff(f,false); fresh.stage_lines(f,false,patch,changes(patch,"first"));
         require(fresh.checked({"show",":new.txt"})=="first\n","Partial stage in unborn branch failed");
@@ -70,7 +87,8 @@ int main() {
         rejects([&]{git.discard_lines(f,patch,selection);});
         f=file(git,"discard.txt"); patch=git.diff(f,false); selection=changes(patch,"FIRST");
         git.discard_lines(f,patch,selection);
-        require(read(repo/"discard.txt")==staged.substr(0,7)+staged.substr(14),"Discard added line changed unrelated content");
+        require(read(repo/"discard.txt")==staged && git.checked({"write-tree"})==tree,"Discard replacement did not restore old line or changed the index");
+        write(repo/"discard.txt",working);
         f=file(git,"discard.txt"); patch=git.diff(f,false);
         write(repo/"discard.txt","external edit\n");
         rejects([&]{git.discard_lines(f,patch,changes(patch));});
