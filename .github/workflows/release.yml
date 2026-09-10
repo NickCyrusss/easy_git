@@ -28,6 +28,17 @@ jobs:
           sudo apt-get install -y cmake ninja-build g++ pkg-config git dpkg-dev libgl1-mesa-dev libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libcurl4-openssl-dev libjson-c-dev xvfb xauth x11-utils desktop-file-utils
       - name: Configure and build
         run: |
+          python3 - <<'PY'
+          import subprocess, tempfile, pathlib, json
+          with tempfile.TemporaryDirectory() as d:
+              def git(*args):
+                  p = subprocess.run(['git','--literal-pathspecs','-c','core.quotepath=false','-C',d,*args],capture_output=True,text=True)
+                  return [p.returncode,p.stdout,p.stderr]
+              git('init'); git('config','user.name','Test'); git('config','user.email','test@example.invalid')
+              pathlib.Path(d,'base').write_text('base'); git('add','.'); git('commit','-m','base')
+              pathlib.Path(d,'draft').write_text('draft')
+              print('::notice::'+json.dumps({'git':git('--version'),'stash':git('stash','push','-u','-m','test'),'list':git('stash','list','-z','--format=%gd%x00%H%x00%s%x00%an%x00%aI%x00%P'),'status':git('status','--porcelain') }))
+          PY
           cmake -S . -B build-deb -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr
           cmake --build build-deb -j 4
       - name: Test and package
