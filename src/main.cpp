@@ -17,6 +17,7 @@
 #include <future>
 #include <sstream>
 #include <stdexcept>
+#include <sys/stat.h>
 
 namespace {
 namespace fs = std::filesystem;
@@ -114,6 +115,7 @@ void theme(bool light = false) {
 }
 
 struct JobResult {
+    bool external_diff = false;
     eg::Snapshot snapshot;
     bool ai_generated = false;
     eg::CommitMessage generated;
@@ -185,6 +187,8 @@ struct RepoTab {
     std::array<bool,4> sidebar_open = {true,true,true,true};
     std::array<float,4> sidebar_weights = {1,1,1,1};
     bool workspace = true, selected_staged = false, opening = false;
+    double diff_checked_at = 0;
+    std::string watched_stamp;
     bool busy() const { return job.valid(); }
     bool ready() const { return !repo.root.empty() && !busy(); }
 
@@ -440,7 +444,11 @@ struct RepoTab {
                 status = r.message; browse_error = r.error;
                 return;
             }
-            if (r.reload) {
+            if (r.external_diff) {
+                repo.files = std::move(r.files); rebuild_file_lists();
+                if (workspace && show_diff && !selected_staged && selected_file == r.preview_file && detail != r.detail)
+                    set_detail(std::move(r.detail));
+            } else if (r.reload) {
                 bool keep_preview = show_diff;
                 clear_file_selection();
                 just_opened = repo.root.empty();
@@ -542,6 +550,7 @@ struct RepoTab {
     void select_file(const eg::File& file, bool staged) {
         if (busy()) return;
         selected_file = file.path; selected_staged = staged; show_diff = true; set_detail("");
+        watched_stamp = file_stamp();
         auto root = repo.root; auto stop = cancel; bool working = workspace; auto commit = viewed_commit;
         bool saved = stash_view; auto stash = viewed_stash;
         launch("Loading diff...", [root, stop, file, staged, working, commit, saved, stash] {
@@ -549,6 +558,30 @@ struct RepoTab {
             if (working && file.conflicted()) { r.conflict = git.read_conflict(file); r.conflict_selection = true; return r; }
             r.detail = working ? git.diff(file, staged) : saved ? git.stash_diff(stash,file) : git.commit_diff(commit, file);
             r.message = "Viewing " + visible_path(file.path); return r;
+        });
+        previewing = true;
+    }
+    std::string file_stamp() const {
+        struct stat info{};
+        if (stat((fs::path(repo.root)/selected_file).c_str(),&info) != 0) return {};
+        return std::to_string(info.st_dev)+":"+std::to_string(info.st_ino)+":"+std::to_string(info.st_size)+":"+
+            std::to_string(info.st_mtim.tv_sec)+":"+std::to_string(info.st_mtim.tv_nsec)+":"+
+            std::to_string(info.st_ctim.tv_sec)+":"+std::to_string(info.st_ctim.tv_nsec);
+    }
+    void refresh_external_diff() {
+        if (!ready() || !workspace || !show_diff || selected_staged || selected_file.empty() ||
+            conflict_open || !pending_kind.empty() || ImGui::GetTime()-diff_checked_at < 0.5) return;
+        diff_checked_at = ImGui::GetTime();
+        auto stamp = file_stamp();
+        if (stamp == watched_stamp) return;
+        watched_stamp = std::move(stamp);
+        auto root = repo.root; auto stop = cancel; auto name = selected_file;
+        launch("Updating file diff...",[root,stop,name] {
+            eg::Git git(root,stop); JobResult r; r.external_diff = true; r.preview_file = name;
+            r.files = eg::parse_status(git.checked({"status","--porcelain=v1","-z","--untracked-files=all"}));
+            auto found = std::find_if(r.files.begin(),r.files.end(),[&](const auto& f) { return f.path == name; });
+            if (found != r.files.end() && found->unstaged() && !found->conflicted()) r.detail = git.diff(*found,false);
+            r.message = "Updated " + visible_path(name); return r;
         });
         previewing = true;
     }
@@ -1456,6 +1489,7 @@ struct RepoTab {
         ImGui::SameLine(0,0);
     }
     void frame() {
+        refresh_external_diff();
         header();
         float height = ImGui::GetContentRegionAvail().y - 36;
         float width = ImGui::GetContentRegionAvail().x;

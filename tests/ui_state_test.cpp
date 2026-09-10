@@ -471,6 +471,30 @@ int main() {
         partial->mutate("Delayed preview",[](const eg::Git&) { std::this_thread::sleep_for(std::chrono::milliseconds(30)); });
         partial->return_to_graph(); settle(restored);
         require(!partial->show_diff && !partial->has_file_selection() && partial->selected_file.empty(),"Background refresh restored selection after returning to graph");
+        auto watched_index = git_b.checked({"show",":partial.txt"});
+        std::ofstream(root_b/"partial.txt") << watched_index << "external one\n";
+        partial->load(root_b.string()); settle(restored); preview_partial(false);
+        partial->pick_line(partial->hunk_lines(first_hunk()).back(),false,false);
+        auto refresh_external = [&] { partial->diff_checked_at=ImGui::GetTime()-1; frame(restored); settle(restored); };
+        std::ofstream(root_b/"partial.txt") << watched_index << "external two\n";
+        refresh_external();
+        require(partial->detail.find("+external two")!=std::string::npos && partial->detail.find("+external one")==std::string::npos &&
+                partial->selected_lines.empty() && git_b.checked({"show",":partial.txt"})==watched_index,"External save did not refresh diff safely");
+        std::ofstream(root_b/"replacement.tmp") << watched_index << "external six\n";
+        fs::rename(root_b/"replacement.tmp",root_b/"partial.txt"); refresh_external();
+        require(partial->detail.find("+external six")!=std::string::npos,"Atomic editor save was not detected");
+        fs::remove(root_b/"partial.txt"); refresh_external();
+        require(partial->detail.find("deleted file mode")!=std::string::npos,"External file deletion was not reflected");
+        std::ofstream(root_b/"partial.txt") << watched_index; refresh_external();
+        require(partial->detail.empty() && partial->show_diff && partial->selected_file=="partial.txt","External restore left a stale diff or lost preview");
+        std::ofstream(root_b/"partial.txt") << watched_index << "external new\n"; refresh_external();
+        require(partial->detail.find("+external new")!=std::string::npos,"Preview stopped watching after file became clean");
+        std::ofstream(root_b/"partial.txt") << watched_index << "external end\n";
+        partial->diff_checked_at=ImGui::GetTime()-1; partial->refresh_external_diff(); partial->return_to_graph(); settle(restored);
+        require(!partial->show_diff && partial->selected_file.empty() && partial->detail.empty(),"External refresh reopened a closed preview");
+        preview_partial(true); auto staged_preview=partial->detail;
+        std::ofstream(root_b/"partial.txt") << watched_index << "unstaged only\n"; refresh_external();
+        require(partial->detail==staged_preview && partial->selected_staged,"Working-tree edit replaced a staged diff");
         snprintf(restored.tabs[0]->message,sizeof(restored.tabs[0]->message),"Keep existing draft");
         restored.tabs[0]->generate_message();
         while (restored.busy()) { frame(restored); std::this_thread::sleep_for(std::chrono::milliseconds(5)); }
