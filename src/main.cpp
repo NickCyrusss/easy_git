@@ -182,6 +182,8 @@ struct RepoTab {
     char path[4096] = {}, search[256] = {}, message[8192] = {}, description[8192] = {}, new_name[256] = {}, file_search[256] = {};
     int limit = 300;
     float sidebar_width = 210, detail_width = 410;
+    std::array<bool,4> sidebar_open = {true,true,true,true};
+    std::array<float,4> sidebar_weights = {1,1,1,1};
     bool workspace = true, selected_staged = false, opening = false;
     bool busy() const { return job.valid(); }
     bool ready() const { return !repo.root.empty() && !busy(); }
@@ -534,7 +536,7 @@ struct RepoTab {
         launch("Loading stash files...", [root, stop, stash] {
             eg::Git git(root,stop); JobResult r; r.stash_selection = true;
             r.files = git.stash_files(stash); r.commit = git.read_commit(stash.id);
-            r.detail = stash.subject; r.message = "Previewing " + stash.ref; return r;
+            r.detail = stash.subject; r.message = "Previewing " + stash.subject; return r;
         });
     }
     void select_file(const eg::File& file, bool staged) {
@@ -602,9 +604,7 @@ struct RepoTab {
         ImGui::EndChild();
     }
 
-    void refs_section(const char* title, const std::string& prefix) {
-        ImGui::Spacing();
-        if (!ImGui::CollapsingHeader(title,ImGuiTreeNodeFlags_DefaultOpen)) return;
+    void refs_section(const std::string& prefix) {
         int count = 0;
         for (const auto& ref : repo.refs) {
             if (ref.full.rfind(prefix,0) != 0) continue;
@@ -640,32 +640,84 @@ struct RepoTab {
         if (prefix == "refs/heads/" && button("+ New branch",idle(),{-1,0})) { new_kind = "branch"; new_name[0] = 0; }
         if (prefix == "refs/tags/" && button("+ New tag",ready() && repo.has_head,{-1,0})) { new_kind = "tag"; new_name[0] = 0; }
     }
+    std::array<float,4> sidebar_heights(float space) const {
+        std::array<float,4> heights{};
+        int count = std::count(sidebar_open.begin(),sidebar_open.end(),true);
+        if (!count) return heights;
+        space = std::max(0.0f,space);
+        float minimum = std::min(32.0f,space/count), total = 0;
+        for (int i=0;i<4;++i) if (sidebar_open[i]) total += sidebar_weights[i];
+        for (int i=0;i<4;++i) if (sidebar_open[i])
+            heights[i] = minimum + (space-minimum*count)*(total > 0 ? sidebar_weights[i]/total : 1.0f/count);
+        return heights;
+    }
     void sidebar() {
         section("WORKSPACE");
         if (ImGui::Selectable("Working changes", workspace, 0, {0,30})) select_workspace();
         label((std::to_string(repo.files.size()) + " changed files").c_str());
-        refs_section("LOCAL", "refs/heads/");
-        refs_section("REMOTE", "refs/remotes/");
-        refs_section("TAGS", "refs/tags/");
-        ImGui::Spacing();
-        if (ImGui::CollapsingHeader("STASH",ImGuiTreeNodeFlags_DefaultOpen)) {
-            for (const auto& stash : repo.stashes) {
-                ImGui::PushID(stash.ref.c_str());
-                auto pos = ImGui::GetCursorScreenPos();
-                if (ImGui::Selectable("##stash",stash_view && viewed_stash.id == stash.id,0,{0,26}) && ready()) select_stash(stash);
-                text_clipped(ImGui::GetWindowDrawList(),{pos.x+5,pos.y+4},stash.ref + " " + stash.subject,
-                    ImGui::GetColorU32(ImGuiCol_Text),{pos.x+ImGui::GetContentRegionAvail().x,pos.y+26});
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s\n%s\nClick to preview",stash.ref.c_str(),stash.subject.c_str());
-                if (ImGui::BeginPopupContextItem()) {
-                    stash_actions(stash);
-                    ImGui::EndPopup();
+        const char* titles[] = {"LOCAL","REMOTE","TAGS","STASH"};
+        const char* prefixes[] = {"refs/heads/","refs/remotes/","refs/tags/"};
+        auto pos = ImGui::GetCursorScreenPos();
+        float width = ImGui::GetContentRegionAvail().x, header = ImGui::GetFrameHeight();
+        float space = std::max(0.0f,ImGui::GetContentRegionAvail().y-4*(header+2)-3*6);
+        auto heights = sidebar_heights(space);
+        auto open = sidebar_open;
+        for (int i=0;i<4;++i) {
+            ImGui::PushID(titles[i]);
+            ImGui::SetCursorScreenPos(pos);
+            ImGui::SetNextItemOpen(open[i],ImGuiCond_Always);
+            sidebar_open[i] = ImGui::CollapsingHeader(titles[i]);
+            pos.y += header+2;
+            if (open[i] && heights[i] > 0) {
+                ImGui::SetCursorScreenPos(pos);
+                if (ImGui::BeginChild("items",{width,heights[i]},ImGuiChildFlags_None)) {
+                    if (i<3) refs_section(prefixes[i]); else stash_section();
                 }
-                ImGui::PopID();
+                ImGui::EndChild();
+                pos.y += heights[i];
             }
-            if (repo.stashes.empty()) label("  None");
-            if (button("Stash changes",idle() && repo.has_head && !repo.files.empty(),{-1,0})) {
-                new_kind = "stash"; new_name[0] = 0;
+            if (i<3) {
+                ImGui::SetCursorScreenPos(pos);
+                int next = i+1; while (next<4 && !open[next]) ++next;
+                ImGui::BeginDisabled(!open[i] || next==4);
+                ImGui::InvisibleButton("resize",{width,6});
+                bool active = ImGui::IsItemActive(), hovered = ImGui::IsItemHovered();
+                if (active || hovered) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
+                ImGui::GetWindowDrawList()->AddLine({pos.x,pos.y+3},{pos.x+width,pos.y+3},
+                    ImGui::GetColorU32(active ? ImGuiCol_SeparatorActive : hovered ? ImGuiCol_SeparatorHovered : ImGuiCol_Separator),2);
+                if (active && ImGui::GetIO().MouseDelta.y != 0 && next<4) {
+                    int count = std::count(open.begin(),open.end(),true);
+                    float minimum = std::min(32.0f,space/count);
+                    float delta = std::clamp(ImGui::GetIO().MouseDelta.y,minimum-heights[i],heights[next]-minimum);
+                    auto resized = heights; resized[i] += delta; resized[next] -= delta;
+                    float total = 0, extra = space-minimum*count;
+                    for (int j=0;j<4;++j) if (open[j]) total += sidebar_weights[j];
+                    if (extra > 0) for (int j=0;j<4;++j) if (open[j])
+                        sidebar_weights[j] = std::max(0.0f,resized[j]-minimum)*(total > 0 ? total : float(count))/extra;
+                }
+                ImGui::EndDisabled();
+                pos.y += 6;
             }
+            ImGui::PopID();
+        }
+    }
+    void stash_section() {
+        for (const auto& stash : repo.stashes) {
+            ImGui::PushID(stash.ref.c_str());
+            auto pos = ImGui::GetCursorScreenPos();
+            if (ImGui::Selectable("##stash",stash_view && viewed_stash.id == stash.id,0,{0,26}) && ready()) select_stash(stash);
+            text_clipped(ImGui::GetWindowDrawList(),{pos.x+5,pos.y+4},stash.subject,
+                ImGui::GetColorU32(ImGuiCol_Text),{pos.x+ImGui::GetContentRegionAvail().x,pos.y+26});
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s\nClick to preview",stash.subject.c_str());
+            if (ImGui::BeginPopupContextItem()) {
+                stash_actions(stash);
+                ImGui::EndPopup();
+            }
+            ImGui::PopID();
+        }
+        if (repo.stashes.empty()) label("  None");
+        if (button("Stash changes",idle() && repo.has_head && !repo.files.empty(),{-1,0})) {
+            new_kind = "stash"; new_name[0] = 0;
         }
     }
     void stash_actions(const eg::Stash& stash) {
@@ -751,7 +803,7 @@ struct RepoTab {
                 if (scroll_to_commit == c.id) {
                     ImGui::SetScrollHereY(0.5f); ImGui::SetScrollX(0); scroll_to_commit.clear();
                 }
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s\n%s\n%s", c.subject.c_str(), c.refs.c_str(), c.id.c_str());
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s\n%s\n%s", c.subject.c_str(), stash ? "Stash" : c.refs.c_str(), c.id.c_str());
                 if (ImGui::BeginPopupContextItem()) {
                     if (stash) stash_actions(*stash);
                     else {
@@ -763,12 +815,15 @@ struct RepoTab {
                 }
                 auto* draw = ImGui::GetWindowDrawList();
                 float offset = 0;
-                if (!c.refs.empty()) {
-                    std::string ref = c.refs;
+                if (stash || !c.refs.empty()) {
+                    std::string ref = stash ? "STASH" : c.refs;
                     if (ref.size() > 26) ref = ref.substr(0,23) + "...";
                     float badge = std::min(ImGui::CalcTextSize(ref.c_str()).x + 14, std::max(0.0f, width*0.48f));
-                    draw->AddRectFilled({p.x,p.y+6}, {p.x+badge,p.y+28}, (light_theme ? IM_COL32(204,231,222,255) : IM_COL32(43,81,78,255)), 4);
-                    text_clipped(draw, {p.x+7,p.y+7}, ref, lane_colors[0], {p.x+badge-3,p.y+29});
+                    ImU32 background = stash ? (light_theme ? IM_COL32(234,220,250,255) : IM_COL32(70,49,94,255))
+                                             : (light_theme ? IM_COL32(204,231,222,255) : IM_COL32(43,81,78,255));
+                    ImU32 foreground = stash ? (light_theme ? IM_COL32(105,53,150,255) : IM_COL32(213,177,248,255)) : lane_colors[0];
+                    draw->AddRectFilled({p.x,p.y+6}, {p.x+badge,p.y+28}, background, 4);
+                    text_clipped(draw, {p.x+7,p.y+7}, ref, foreground, {p.x+badge-3,p.y+29});
                     offset = badge + 9;
                 }
                 text_clipped(draw, {p.x+offset,p.y+8}, c.subject, ImGui::GetColorU32(ImGuiCol_Text), {p.x+width,p.y+33});
@@ -1226,7 +1281,7 @@ struct RepoTab {
             if (conflict) ImGui::TextColored(red,"Resolve conflicts before committing.");
         } else {
             const auto& oid = stash_view ? viewed_stash.id : selected_commit;
-            ImGui::TextColored(mint,"%s",stash_view ? viewed_stash.ref.c_str() : oid.substr(0,12).c_str()); ImGui::SameLine();
+            ImGui::TextColored(mint,"%s",oid.substr(0,12).c_str()); ImGui::SameLine();
             if (button("Copy SHA")) ImGui::SetClipboardText(oid.c_str());
             if (!stash_view) {
                 ImGui::SameLine(); if (button("Actions")) ImGui::OpenPopup("commit_actions");
@@ -1276,7 +1331,7 @@ struct RepoTab {
             ImGui::EndChild();
             ImGui::TextWrapped("Staged changes are kept. Untracked files are deleted permanently. Discarded edits cannot be undone here.");
         } else if (stash) {
-            ImGui::TextWrapped("%s  %s\n%s",pending_stash.ref.c_str(),pending_stash.id.substr(0,12).c_str(),pending_stash.subject.c_str());
+            ImGui::TextWrapped("%s\n%s",pending_stash.subject.c_str(),pending_stash.id.substr(0,12).c_str());
             if (pending_kind == "apply stash") {
                 ImGui::TextWrapped("Apply saved changes to this working tree. The stash is kept; conflicts may need resolving.");
                 ImGui::Checkbox("Restore staged state (--index)",&restore_index);
@@ -1406,7 +1461,7 @@ struct RepoTab {
         float width = ImGui::GetContentRegionAvail().x;
         sidebar_width = std::clamp(sidebar_width,160.0f,std::max(160.0f,width*0.25f));
         detail_width = std::clamp(detail_width,320.0f,std::max(320.0f,width*0.43f));
-        ImGui::BeginChild("sidebar",{sidebar_width,height},ImGuiChildFlags_AlwaysUseWindowPadding); sidebar(); ImGui::EndChild();
+        ImGui::BeginChild("sidebar",{sidebar_width,height},ImGuiChildFlags_AlwaysUseWindowPadding,ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse); sidebar(); ImGui::EndChild();
         splitter("left_split",height,sidebar_width,false);
         ImGui::PushStyleColor(ImGuiCol_ChildBg,light_theme ? ImVec4(0.94f,0.96f,0.98f,1) : ImVec4(0.105f,0.12f,0.16f,1));
         ImGui::BeginChild("history_panel",{std::max(200.0f,width-sidebar_width-detail_width-12),height},ImGuiChildFlags_AlwaysUseWindowPadding);

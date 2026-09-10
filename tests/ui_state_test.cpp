@@ -65,6 +65,40 @@ int main() {
         io.AddMouseButtonEvent(0,true); frame(app);
         io.AddMouseButtonEvent(0,false); frame(app); frame(app);
         require(app.active == a_id,"Clicking the first repository tab did not activate it");
+        auto real_refs = a->repo.refs;
+        for (int i=0;i<100;++i) a->repo.refs.push_back({"refs/heads/extra"+std::to_string(i),"extra"+std::to_string(i),"unused"});
+        io.DisplaySize = {1080,720}; frame(app); frame(app);
+        auto local_items = [&]() -> ImGuiWindow* {
+            for (auto* window : GImGui->Windows)
+                if (window->Active && std::string(window->Name).find("/sidebar_")!=std::string::npos &&
+                    std::string(window->Name).find("/items_")!=std::string::npos &&
+                    window->ScrollMax.y > 1000) return window;
+            throw std::runtime_error("Scrollable Local section missing");
+        };
+        auto* local = local_items(); auto* sidebar = local->ParentWindow;
+        int visible_sections = 0;
+        for (auto* window : GImGui->Windows) if (window->Active && window->ParentWindow==sidebar) {
+            ++visible_sections;
+            require(window->Pos.y >= sidebar->ClipRect.Min.y && window->Pos.y+window->Size.y <= sidebar->ClipRect.Max.y+1,"Sidebar section escaped visible bounds");
+        }
+        require(visible_sections==4,"Long Local list hid another sidebar section");
+        float title_y = local->Pos.y-ImGui::GetFrameHeight()*0.5f-2;
+        float divider_y = local->Pos.y+local->Size.y+3;
+        auto old_weights = a->sidebar_weights;
+        io.AddMousePosEvent(local->Pos.x+60,divider_y); frame(app);
+        io.AddMouseButtonEvent(0,true); frame(app);
+        io.AddMousePosEvent(local->Pos.x+60,divider_y+25); frame(app); frame(app);
+        io.AddMouseButtonEvent(0,false); frame(app); frame(app);
+        require(a->sidebar_weights!=old_weights && b->sidebar_weights==std::array<float,4>{1,1,1,1},"Sidebar divider did not resize or changed another tab");
+        local=local_items();
+        io.AddMousePosEvent(local->Pos.x+60,local->Pos.y+20); frame(app); io.AddMouseWheelEvent(0,-8); frame(app); frame(app);
+        require(local->Scroll.y>0 && sidebar->Scroll.y==0,"Scrolling Local moved the section headers");
+        io.AddMousePosEvent(local->Pos.x+30,title_y); frame(app);
+        io.AddMouseButtonEvent(0,true); frame(app); io.AddMouseButtonEvent(0,false); frame(app); frame(app);
+        require(!a->sidebar_open[0] && a->sidebar_open[3],"Local header did not collapse independently");
+        io.AddMouseButtonEvent(0,true); frame(app); io.AddMouseButtonEvent(0,false); frame(app); frame(app);
+        require(a->sidebar_open[0],"Collapsed Local header was not available to reopen");
+        a->repo.refs=std::move(real_refs); io.DisplaySize={1440,900}; frame(app);
         snprintf(a->message,sizeof(a->message),"Draft for A"); snprintf(a->description,sizeof(a->description),"Description A");
         snprintf(b->message,sizeof(b->message),"Draft for B");
         auto change = *std::find_if(a->repo.files.begin(),a->repo.files.end(),[](const auto& f) { return f.path == "src/shared.txt"; });
