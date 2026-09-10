@@ -20,11 +20,11 @@ Easy Git takes inspiration from GitKraken's three-panel interface. It is an inde
 
 ## Debian package
 
-Download the [v0.1.0 amd64 `.deb`](https://github.com/NickCyrusss/easy_git/raw/refs/heads/packages/v0.1.0/easy-git_0.1.0_amd64.deb) and [SHA256SUMS](https://github.com/NickCyrusss/easy_git/raw/refs/heads/packages/v0.1.0/SHA256SUMS) from the dedicated `packages` branch. Packages are built and tested on Ubuntu 22.04 (x86-64).
+Download the [v0.1.1 amd64 `.deb`](https://github.com/NickCyrusss/easy_git/releases/download/v0.1.1/easy-git_0.1.1_amd64.deb) and [SHA256SUMS](https://github.com/NickCyrusss/easy_git/releases/download/v0.1.1/SHA256SUMS) from [GitHub Releases](https://github.com/NickCyrusss/easy_git/releases/tag/v0.1.1). Packages are built and tested on Ubuntu 22.04 (x86-64).
 
 ```sh
 sha256sum -c SHA256SUMS
-sudo apt install ./easy-git_0.1.0_amd64.deb
+sudo apt install ./easy-git_0.1.1_amd64.deb
 ```
 
 The package includes the application-menu launcher and icon. Launch **Easy Git** or run `easy_git`; remove with `sudo apt remove easy-git`. User configuration in `~/.easy_git` is retained.
@@ -38,7 +38,7 @@ ctest --test-dir build-deb --output-on-failure
 (cd build-deb && cpack -G DEB)
 ```
 
-The `.deb` is written to `build-deb/`. Pushing a version tag matching the CMake version (for example `v0.1.0`) runs the Debian release workflow: build, test, install-check, and upload the package and checksum to GitHub Releases.
+The `.deb` is written to `build-deb/`. Pushing a version tag matching the CMake version (for example `v0.1.1`) runs the Debian release workflow: build, test, install-check, and upload the package and checksum to GitHub Releases.
 
 ## Build and run
 

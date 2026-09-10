@@ -10,11 +10,11 @@
 
 ## Debian 安装包
 
-从独立的 `packages` 分支下载 [v0.1.0 amd64 安装包](https://github.com/NickCyrusss/easy_git/raw/refs/heads/packages/v0.1.0/easy-git_0.1.0_amd64.deb) 和 [SHA256SUMS](https://github.com/NickCyrusss/easy_git/raw/refs/heads/packages/v0.1.0/SHA256SUMS)。安装包在 Ubuntu 22.04（x86-64）上构建和验证。
+从 [GitHub Releases](https://github.com/NickCyrusss/easy_git/releases/tag/v0.1.1) 下载 [v0.1.1 amd64 安装包](https://github.com/NickCyrusss/easy_git/releases/download/v0.1.1/easy-git_0.1.1_amd64.deb) 和 [SHA256SUMS](https://github.com/NickCyrusss/easy_git/releases/download/v0.1.1/SHA256SUMS)。安装包在 Ubuntu 22.04（x86-64）上构建和验证。
 
 ```sh
 sha256sum -c SHA256SUMS
-sudo apt install ./easy-git_0.1.0_amd64.deb
+sudo apt install ./easy-git_0.1.1_amd64.deb
 ```
 
 包含应用菜单入口和图标。安装后打开 **Easy Git** 或运行 `easy_git`；卸载使用 `sudo apt remove easy-git`，保留用户目录中的 `~/.easy_git` 配置。
@@ -28,7 +28,7 @@ ctest --test-dir build-deb --output-on-failure
 (cd build-deb && cpack -G DEB)
 ```
 
-产物位于 `build-deb/`。推送与 CMake 版本一致的标签（如 `v0.1.0`）会运行 Debian 发布工作流，依次构建、测试、验证安装，并上传安装包和校验文件至 GitHub Releases。
+产物位于 `build-deb/`。推送与 CMake 版本一致的标签（如 `v0.1.1`）会运行 Debian 发布工作流，依次构建、测试、验证安装，并上传安装包和校验文件至 GitHub Releases。
 
 ## 构建与启动
 
