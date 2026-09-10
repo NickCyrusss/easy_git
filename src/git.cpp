@@ -58,8 +58,11 @@ Git::Git(std::string root, std::shared_ptr<std::atomic_bool> cancel)
 
 Result Git::run(const std::vector<std::string>& args) const {
     // No shell: filenames, branch names and commit messages stay literal arguments.
-    std::vector<std::string> words = {"git", "--no-pager", "--literal-pathspecs", "-c",
+    std::vector<std::string> words = {"git", "--no-pager", "-c",
         "color.ui=false", "-c", "core.quotepath=false", "-C", root_};
+    // Stash commands here use refs/messages, not pathspecs. Git 2.55 propagates
+    // literal pathspec mode to stash's internal cleanup, leaving untracked files behind.
+    if (args.empty() || args.front() != "stash") words.push_back("--literal-pathspecs");
     words.insert(words.end(), args.begin(), args.end());
     std::vector<std::string> env;
     for (char** e = environ; *e; ++e) {
