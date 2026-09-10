@@ -18,6 +18,28 @@ Easy Git takes inspiration from GitKraken's three-panel interface. It is an inde
 - **Appearance:** light and dark themes, automatic window-size restoration, and resizable panels. Local, Remote, Tags, and Stash keep their collapse headers visible while their lists scroll independently. Drag the horizontal separators to resize expanded sections; collapsed sections release their space. Heights and collapse states are independent per repository for the current session.
 - **Optional AI:** generate an editable commit draft from staged changes using OpenAI or Anthropic compatible APIs, with 36 searchable provider/platform presets and independent, named model configurations.
 
+## Debian package
+
+Download the amd64 `.deb` and `SHA256SUMS` from [GitHub Releases](https://github.com/NickCyrusss/easy_git/releases). Packages are built and tested on Ubuntu 22.04 (x86-64).
+
+```sh
+sha256sum -c SHA256SUMS
+sudo apt install ./easy-git_0.1.0_amd64.deb
+```
+
+The package includes the application-menu launcher and icon. Launch **Easy Git** or run `easy_git`; remove with `sudo apt remove easy-git`. User configuration in `~/.easy_git` is retained.
+
+To build a package locally (requires `dpkg-dev` plus the build dependencies below):
+
+```sh
+cmake -S . -B build-deb -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr
+cmake --build build-deb -j 4
+ctest --test-dir build-deb --output-on-failure
+(cd build-deb && cpack -G DEB)
+```
+
+The `.deb` is written to `build-deb/`. Pushing a version tag matching the CMake version (for example `v0.1.0`) runs the Debian release workflow: build, test, install-check, and upload the package and checksum to GitHub Releases.
+
 ## Build and run
 
 Requires Linux, Git, CMake 3.22+, a C++17 compiler, OpenGL, X11, libcurl, and json-c. On Ubuntu/Debian:

@@ -8,6 +8,28 @@
 
 ![实际运行截图：多仓库与文件面板](docs/multiple-repositories.png)
 
+## Debian 安装包
+
+从 [GitHub Releases](https://github.com/NickCyrusss/easy_git/releases) 下载 amd64 `.deb` 和 `SHA256SUMS`。安装包在 Ubuntu 22.04（x86-64）上构建和验证。
+
+```sh
+sha256sum -c SHA256SUMS
+sudo apt install ./easy-git_0.1.0_amd64.deb
+```
+
+包含应用菜单入口和图标。安装后打开 **Easy Git** 或运行 `easy_git`；卸载使用 `sudo apt remove easy-git`，保留用户目录中的 `~/.easy_git` 配置。
+
+自行打包需安装 `dpkg-dev` 及下方构建依赖：
+
+```sh
+cmake -S . -B build-deb -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr
+cmake --build build-deb -j 4
+ctest --test-dir build-deb --output-on-failure
+(cd build-deb && cpack -G DEB)
+```
+
+产物位于 `build-deb/`。推送与 CMake 版本一致的标签（如 `v0.1.0`）会运行 Debian 发布工作流，依次构建、测试、验证安装，并上传安装包和校验文件至 GitHub Releases。
+
 ## 构建与启动
 
 依赖：Git、CMake 3.22+、C++17 编译器、OpenGL、X11、libcurl 和 json-c 开发库。Ubuntu/Debian 可安装：
