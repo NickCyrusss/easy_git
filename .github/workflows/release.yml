@@ -2,6 +2,16 @@ name: Debian release
 on:
   push:
     tags: ['v*']
+    branches: ['main']
+    paths: ['.github/workflows/release.yml']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing version tag to publish
+        required: true
+        default: v0.1.0
+env:
+  RELEASE_TAG: ${{ inputs.tag || (github.ref_type == 'tag' && github.ref_name) || 'v0.1.0' }}
 permissions:
   contents: write
 jobs:
@@ -10,6 +20,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
       - name: Install build dependencies
         run: |
           sudo apt-get update
@@ -23,7 +35,7 @@ jobs:
           ctest --test-dir build-deb --output-on-failure
           cd build-deb
           cpack -G DEB
-          test "$(dpkg-deb -f easy-git_*.deb Version)" = "${GITHUB_REF_NAME#v}"
+          test "$(dpkg-deb -f easy-git_*.deb Version)" = "${RELEASE_TAG#v}"
           dpkg-deb -I easy-git_*.deb
           sudo apt-get install -y ./easy-git_*.deb
           desktop-file-validate /usr/share/applications/easy_git.desktop
@@ -33,4 +45,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" build-deb/easy-git_*.deb build-deb/SHA256SUMS --verify-tag --title "Easy Git $GITHUB_REF_NAME" --notes-file docs/release-notes.md
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" build-deb/easy-git_*.deb build-deb/SHA256SUMS
+          else
+            gh release create "$RELEASE_TAG" build-deb/easy-git_*.deb build-deb/SHA256SUMS --verify-tag --title "Easy Git $RELEASE_TAG" --notes-file docs/release-notes.md
+          fi
