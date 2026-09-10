@@ -32,7 +32,11 @@ jobs:
           cmake --build build-deb -j 4
       - name: Test and package
         run: |
-          ctest --test-dir build-deb --output-on-failure
+          if ! ctest --test-dir build-deb --output-on-failure; then
+            while IFS= read -r line; do printf '::error::%s\n' "$line"; done < build-deb/Testing/Temporary/LastTestsFailed.log
+            grep 'FAIL:' build-deb/Testing/Temporary/LastTest.log | while IFS= read -r line; do printf '::error::%s\n' "$line"; done
+            exit 1
+          fi
           cd build-deb
           cpack -G DEB
           test "$(dpkg-deb -f easy-git_*.deb Version)" = "${RELEASE_TAG#v}"
