@@ -10,7 +10,7 @@
 
 ## Debian 安装包
 
-从 [GitHub Releases](https://github.com/NickCyrusss/easy_git/releases) 下载 amd64 `.deb` 和 `SHA256SUMS`。安装包在 Ubuntu 22.04（x86-64）上构建和验证。
+从独立的 `packages` 分支下载 [v0.1.0 amd64 安装包](https://github.com/NickCyrusss/easy_git/raw/refs/heads/packages/v0.1.0/easy-git_0.1.0_amd64.deb) 和 [SHA256SUMS](https://github.com/NickCyrusss/easy_git/raw/refs/heads/packages/v0.1.0/SHA256SUMS)。安装包在 Ubuntu 22.04（x86-64）上构建和验证。
 
 ```sh
 sha256sum -c SHA256SUMS
