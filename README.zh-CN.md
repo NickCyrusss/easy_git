@@ -10,11 +10,11 @@
 
 ## Debian 安装包
 
-从 [GitHub Releases](https://github.com/NickCyrusss/easy_git/releases/tag/v0.1.1) 下载 [v0.1.1 amd64 安装包](https://github.com/NickCyrusss/easy_git/releases/download/v0.1.1/easy-git_0.1.1_amd64.deb) 和 [SHA256SUMS](https://github.com/NickCyrusss/easy_git/releases/download/v0.1.1/SHA256SUMS)。安装包在 Ubuntu 22.04（x86-64）上构建和验证。
+从 [GitHub Releases](https://github.com/NickCyrusss/easy_git/releases/tag/v0.1.2) 下载 [v0.1.2 amd64 安装包](https://github.com/NickCyrusss/easy_git/releases/download/v0.1.2/easy-git_0.1.2_amd64.deb) 和 [SHA256SUMS](https://github.com/NickCyrusss/easy_git/releases/download/v0.1.2/SHA256SUMS)。安装包在 Ubuntu 22.04（x86-64）上构建和验证。
 
 ```sh
 sha256sum -c SHA256SUMS
-sudo apt install ./easy-git_0.1.1_amd64.deb
+sudo apt install ./easy-git_0.1.2_amd64.deb
 ```
 
 包含应用菜单入口和图标。安装后打开 **Easy Git** 或运行 `easy_git`；卸载使用 `sudo apt remove easy-git`，保留用户目录中的 `~/.easy_git` 配置。
@@ -28,7 +28,7 @@ ctest --test-dir build-deb --output-on-failure
 (cd build-deb && cpack -G DEB)
 ```
 
-产物位于 `build-deb/`。推送与 CMake 版本一致的标签（如 `v0.1.1`）会运行 Debian 发布工作流，依次构建、测试、验证安装，并上传安装包和校验文件至 GitHub Releases。
+产物位于 `build-deb/`。推送与 CMake 版本一致的标签（如 `v0.1.2`）会运行 Debian 发布工作流，依次构建、测试、验证安装，并上传安装包和校验文件至 GitHub Releases。
 
 ## 构建与启动
 
@@ -90,6 +90,8 @@ ImGui 固定为 `v1.92.5`，GLFW 固定为 `3.4`，首次配置时由 CMake 下�
 
 ## 使用
 
+提交图、提交详情和 Stash 时间按电脑本地时区显示，自动处理夏令时；图中显示日期和时分，详情及悬停提示包含秒与时区。
+
 - 顶部仓库标签页支持切换、拖动排序和关闭；点击 `+` 或 **+ Open repository** 添加仓库。各仓库独立保存文件选择、搜索、面板状态、提交摘要和描述，后台操作不会写入其他仓库。重复打开同一仓库或其子目录时切换到已有标签。
 - 左侧选择工作区，或点击中间的 **// WIP**。中间点击 **< Commit graph** 返回提交图时清除文件和 Diff 行选择；后台预览完成后也不会恢复选择。右侧按 GitKraken 的 Commit Panel 形式展示 **Unstaged Files / Staged Files** 两个可折叠区域，支持 **Path / Tree**、文件筛选、状态标记、悬停暂存/取消暂存按钮及右键操作；Path / Tree 切换居中，Discard 位于左侧。区块标题右侧在有选中文件时批量暂存/取消暂存所选文件，无选择时操作全部文件；行内按钮仍只操作该行文件。无需先选中文件，悬停后即可直接点击 **Stage File**／**Unstage**；按住鼠标期间按钮保持显示，松开后执行。
 - 文件列表支持 **Ctrl + 点击** 逐个添加/取消选择、**Shift + 点击** 从锚点选择连续范围、**Ctrl + Shift + 点击** 追加范围。Path / Tree、工作区、提交和 Stash 文件列表均支持；跨区块选择会切换到该区块。Tree 的范围按屏幕目录顺序，跳过折叠目录；筛选或折叠后清除不可见文件的选择。
@@ -131,7 +133,7 @@ ImGui 固定为 `v1.92.5`，GLFW 固定为 `3.4`，首次配置时由 CMake 下�
 
 - 工作区 Diff 点击增删行进行选择，支持 Ctrl 切换、Shift 范围选择；点击 **Stage lines** 或右键 **Stage selected lines** 暂存所选行，每个 `@@` 区块有 **Stage hunk**。从 **Staged Files** 打开已暂存 Diff，可点击 **Unstage lines** 或 **Unstage hunk** 按行／区块取消暂存。操作只修改暂存区，预览过期时拒绝执行。二进制、符号链接、子模块及重命名使用整文件操作。
 - 从 **Unstaged Files** 打开 Diff，选中增删行后点击 **Discard lines** 或右键 **Discard selected lines...**；也可点击 `@@` 旁的 **Discard hunk**。确认框列出将丢弃的行，仅撤销所选未暂存改动，保留暂存内容和其他改动；预览变化时拒绝执行。支持最大 1 MiB 的普通文本文件；丢弃未跟踪文件的所有行会删除该文件，丢弃后无法在应用中撤销。
-- 点击冲突文件打开 **Resolve conflict**：上方对照 ours（索引 stage 2）与 theirs（stage 3），下方编辑结果。每个冲突区块可 **Use ours / Use theirs / Use both**，也可选择完整版本；某侧删除了文件时可 **Accept deletion**。二进制冲突支持选择完整版本。**Save and mark resolved** 保存并暂存结果，不自动提交；未清理冲突标记或文件已被外部修改时拒绝保存。编辑器支持最大 1 MiB 的普通文件；Rebase 中 ours/theirs 的含义遵循 Git 索引阶段，窗口内有说明。
+- 点击冲突文件打开 **Resolve conflict**：左右对照 **Current／ours** 与 **Incoming／theirs**，下方直接编辑 **Output**。通过 Previous／Next 或非文本输入状态下的上下方向键导航冲突；可勾选两侧的行后 **Apply selected lines**，也可 **Take block／Take both blocks**。**Incoming first** 决定两侧内容合并顺序，**Undo choice** 可撤销最近 16 次选择操作；手工编辑使用文本框自身的撤销功能。支持 **Use entire file**，某侧删除时可 **Accept deletion**；二进制仅支持完整版本选择。仍有冲突标记时禁止保存。**Save and mark resolved** 保存并暂存结果，不自动提交；文件或索引被外部修改时拒绝保存。上限 1 MiB。Rebase 时 Current 是变基后的基准，Incoming 是正在重放的提交。
 - 打开仓库窗口增加 **Open / Clone / Initialize**。Clone 目标必须是新目录或空目录；初始化可指定初始分支、保留已有文件且不自动提交。完成后自动打开仓库。
 - Local / Remote 分支右键增加 **Delete branch...**，删除本地未合并分支需明确勾选，Git 会保护正在工作树检出的分支。远端删除校验已知分支 tip，避免删除已变化的分支。
 - **Push** 或当前本地分支右键增加 **Force push with lease...**，确认源分支及远端目标后执行；需要已配置 upstream 并获取远端跟踪分支。使用明确的 `--force-with-lease` 预期提交，远端 tip 变化时拒绝覆盖。
@@ -154,11 +156,11 @@ ctest --test-dir build --output-on-failure
 
 `git_operations` 验证 Cherry-pick / Merge / Revert、合并提交主线选择、三种 Reset、Stash 只读预览与未跟踪文件、恢复暂存状态、过期删除保护，以及真实冲突的继续、中止和跳过、外部 Rebase 中止、独立 Worktree 的操作状态，以及 Discard 对部分暂存、删除、重命名、特殊路径、符号链接和过期状态的处理，以及批量 Discard 的整组选中文件检查和暂存内容保留。
 
-`git_workflows` 验证按行／区块暂存、取消暂存及丢弃、替换行联动与连续修改的行顺序、新旧行数不等的替换段整体处理、选区隔离与过期预览拒绝、特殊路径与文件末尾处理、冲突结果保存、Clone／初始化、删除本地／远端分支和强制推送 lease 保护。
+`git_workflows` 验证按行／区块暂存、取消暂存及丢弃、替换行联动与连续修改的行顺序、新旧行数不等的替换段整体处理、选区隔离与过期预览拒绝、特殊路径与文件末尾处理、冲突结果保存与残留 diff3 标记拒绝、Clone／初始化、删除本地／远端分支和强制推送 lease 保护。
 
 `settings_and_ai` 使用本地回环 HTTP 模拟服务验证 OpenAI / Anthropic 两种 JSON 请求、对应认证头和响应解析、仅暂存区内容、中文响应、HTTP/格式错误、取消请求、暂存区变化保护，以及配置覆盖保存、各服务商配置切换与重启恢复、旧配置迁移、自定义模型增删与预设删除保护、窗口尺寸读写与非法值校验、0600 权限与损坏配置处理；不调用付费模型。运行此测试需要允许本机监听端口。
 
-`repository_tabs` 使用真实 ImGui 状态（无需 X 服务）验证侧栏标题固定、长列表独立滚动、区域分隔线拖动及折叠展开、标签点击、独立草稿与文件选择、切换期间的后台 Diff/暂存、相同根目录去重、关闭保护、文件树及 Diff 行号，以及 Stash / Discard 的仓库隔离、分支跨分页定位和提交图滚动、Ctrl / Shift / Ctrl+Shift 多选、连续点击的 Diff 更新、Tree 可见范围、筛选及批量暂存/取消暂存/丢弃、未选中文件时行内按钮的按下／保持／释放、无选区 Stage All／Unstage All、1080×720 下顶部 Stash 点击及摘要命名、暂存／未暂存／未跟踪内容保存、成功清空摘要与失败保留、Stash 按基准提交分组与分页加载、提交图 Stash 搜索及点击预览、主题/模型配置与仓库重启恢复、自定义模型增删的保存与取消、区块取消暂存、替换行 Ctrl／Shift 联动选择及完整丢弃范围的确认／取消、外部编辑／原子保存／删除恢复后的 Diff 自动刷新、关闭预览及已暂存预览隔离、AI 失败保留草稿。
+`repository_tabs` 使用真实 ImGui 状态（无需 X 服务）验证侧栏标题固定、长列表独立滚动、区域分隔线拖动及折叠展开、标签点击、独立草稿与文件选择、切换期间的后台 Diff/暂存、相同根目录去重、关闭保护、文件树及 Diff 行号，以及 Stash / Discard 的仓库隔离、分支跨分页定位和提交图滚动、Ctrl / Shift / Ctrl+Shift 多选、连续点击的 Diff 更新、Tree 可见范围、筛选及批量暂存/取消暂存/丢弃、未选中文件时行内按钮的按下／保持／释放、无选区 Stage All／Unstage All、1080×720 下顶部 Stash 点击及摘要命名、暂存／未暂存／未跟踪内容保存、成功清空摘要与失败保留、Stash 按基准提交分组与分页加载、提交图 Stash 搜索及点击预览、主题/模型配置与仓库重启恢复、自定义模型增删的保存与取消、区块取消暂存、替换行 Ctrl／Shift 联动选择及完整丢弃范围的确认／取消、外部编辑／原子保存／删除恢复后的 Diff 自动刷新、关闭预览及已暂存预览隔离、AI 失败保留草稿、本地时间的跨时区与夏令时转换、冲突逐行选择／组合顺序／撤销和输出大小保护。
 
 无需图形依赖也可单独测试 Git 后端：
 

@@ -7,6 +7,7 @@
 namespace eg {
 // Link the old/new sides of replacements; unequal blocks are selected as a unit.
 std::vector<int> expand_line_selection(const std::string& preview, const std::vector<int>& selected);
+bool has_conflict_markers(const std::string& text);
 struct Result {
     int code = 0;
     std::string out, error;

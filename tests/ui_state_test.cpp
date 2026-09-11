@@ -32,6 +32,15 @@ int main() {
     unsigned char* pixels; int w,h; io.Fonts->GetTexDataAsRGBA32(&pixels,&w,&h);
     theme(); App app;
     try {
+        const char* tz = getenv("TZ"); bool had_tz = tz != nullptr; std::string old_tz = tz ? tz : "";
+        setenv("TZ","Asia/Shanghai",1); tzset();
+        require(local_commit_time("2026-01-01T23:30:00-05:00").rfind("2026-01-02 12:30:00",0)==0,"Commit offset was not converted to local timezone");
+        setenv("TZ","America/New_York",1); tzset();
+        require(local_commit_time("2026-07-01T12:00:00+00:00").rfind("2026-07-01 08:00:00",0)==0 &&
+                local_commit_time("2026-01-01T12:00:00+00:00").rfind("2026-01-01 07:00:00",0)==0,"Commit timezone conversion ignored DST");
+        setenv("TZ","UTC",1); tzset();
+        require(local_commit_time("2026-01-01T00:15:00+05:30").rfind("2025-12-31 18:45:00",0)==0 && local_commit_time("invalid")=="invalid","Fractional timezone or invalid date fallback failed");
+        if (had_tz) setenv("TZ",old_tz.c_str(),1); else unsetenv("TZ"); tzset();
         {
             RepoTab tab;
             for (const auto& id : {"new","middle","old"}) { eg::Commit c; c.id=id; tab.repo.commits.push_back(c); }
@@ -352,6 +361,19 @@ int main() {
         require(editor.conflict_blocks().size() == 1 && std::string(editor.resolution.data()).find("ours\ntheirs >>>>>>> inline\nafter") != std::string::npos,"Use both damaged surrounding text or kept base markers");
         editor.choose_conflict_block(1);
         require(std::string(editor.resolution.data()) == "before\nours\ntheirs >>>>>>> inline\nafter\nright\n","Conflict choices did not preserve context");
+        const std::string mixed="before\n<<<<<<< HEAD\nours one\nours two\n||||||| base\nbase\n=======\ntheirs one\ntheirs two\n>>>>>>> side\nafter\n<<<<<<< HEAD\nleft\n=======\nright\n>>>>>>> side\n";
+        editor.set_resolution(mixed); editor.conflict_number=0;
+        auto choices=editor.conflict_choices();
+        require(choices[0]==std::vector<std::string>{"ours one\n","ours two\n"} && choices[1].size()==2,"Conflict choices included base or surrounding lines");
+        editor.conflict_lines[0].insert(1); editor.conflict_lines[1].insert(0); editor.incoming_first=true;
+        editor.apply_conflict_lines();
+        require(std::string(editor.resolution.data()).rfind("before\ntheirs one\nours two\nafter\n",0)==0 && editor.conflict_blocks().size()==1 &&
+                editor.resolution_undo.back()==mixed,"Selected conflict lines damaged output or undo snapshot");
+        editor.conflict_choices(); require(editor.conflict_lines[0].empty() && editor.conflict_lines[1].empty(),"Next conflict retained old line choices");
+        editor.choose_conflict_block(1);
+        require(!eg::has_conflict_markers(editor.resolution.data()),"Resolved output kept conflict markers");
+        std::string resolved=editor.resolution.data(); editor.replace_resolution(std::string(1024*1024+1,'x'));
+        require(std::string(editor.resolution.data())==resolved && !editor.error.empty(),"Oversized conflict output was silently truncated");
         editor.set_detail("diff --git a/file b/file\n@@ -1,2 +1,2 @@\n-old\n+new\n same\n");
         editor.pick_line(2,false,false);
         require(editor.selected_lines.size() == 2,"Selecting old line did not include replacement");

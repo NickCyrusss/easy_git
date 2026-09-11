@@ -1,21 +1,23 @@
-Easy Git for Linux — Debian package built on Ubuntu 22.04, amd64 (x86-64).
+Easy Git v0.1.2
 
-Download the `.deb` and install it with:
+- Commit and stash timestamps follow the computer’s local timezone, including daylight saving. Graph rows show date and time; details and tooltips include seconds and timezone.
+- Conflict editor with Current/Incoming panes and editable Output: choose lines or blocks, control combination order, navigate conflicts, and undo choices. Unresolved conflict markers prevent saving; binary files and deletions retain whole-version handling.
+- Automatically refresh the active unstaged diff after external edits, atomic saves, deletion, or restoration.
+- Updated English/Chinese documentation and conflict editor screenshot.
+
+Download the Ubuntu 22.04 amd64 (x86-64) package and install:
 
 ```sh
-sudo apt install ./easy-git_0.1.1_amd64.deb
+sudo apt install ./easy-git_0.1.2_amd64.deb
 ```
 
-Launch **Easy Git** from your application menu or run `easy_git`. The package includes the executable, desktop launcher, icon, and runtime dependency metadata. Settings stay in `~/.easy_git`. Other distributions and architectures are not validated by this release.
-
-Includes commit graphs, multiple repositories, partial stage/unstage/discard, stash previews, resizable sidebar sections, conflict editing, and optional AI commit messages. `SHA256SUMS` contains the package checksum.
+Launch **Easy Git** from the application menu or run `easy_git`. Settings remain in `~/.easy_git`. `SHA256SUMS` contains the package checksum. Other distributions and architectures are not validated by this release.
 
 ---
 
-Linux 版 Easy Git：基于 Ubuntu 22.04 构建的 amd64（x86-64）Debian 安装包。
+- Commit 和 Stash 时间按电脑本地时区显示，支持夏令时；提交图显示日期和时分，详情与悬停提示包含秒及时区。
+- 冲突编辑器提供 Current／Incoming 对照与可编辑 Output：支持逐行／区块选择、组合顺序、冲突导航和撤销选择；残留冲突标记时禁止保存，二进制文件与删除冲突保留整版本处理。
+- 在外部编辑、原子保存、删除或恢复文件后，自动刷新当前未暂存文件的 Diff。
+- 更新中英文说明及冲突编辑器截图。
 
-下载 `.deb` 后执行上述安装命令，随后从应用菜单打开 **Easy Git**，或运行 `easy_git`。安装包包含程序、桌面入口、图标和运行依赖信息；配置保存在 `~/.easy_git`。本次发布未验证其他发行版及架构。
-
-包含提交图、多仓库、按行／区块暂存及丢弃、Stash 预览、可伸缩侧栏、冲突编辑器和可选 AI 提交信息功能。`SHA256SUMS` 提供安装包校验值。
-
-Fixes Git 2.55 stash cleanup with untracked files. / 修复 Git 2.55 下 Stash 未清理未跟踪文件的问题。
+下载 Ubuntu 22.04 amd64（x86-64）安装包，执行上述安装命令。随后从应用菜单打开 **Easy Git**，或运行 `easy_git`；配置保存在 `~/.easy_git`。`SHA256SUMS` 提供安装包校验值。本次发布未验证其他发行版及架构。

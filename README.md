@@ -11,7 +11,7 @@ Easy Git takes inspiration from GitKraken's three-panel interface. It is an inde
 ## Features
 
 - **Multiple repositories:** browse folders, open and reorder repository tabs, and restore open repositories on startup. Each tab keeps its own draft, selection, and view state during the session.
-- **Commit graph:** inspect branches, merges, commit details, and changed files. Clicking a local or remote branch scrolls to its tip, loading additional history when necessary.
+- **Commit graph:** inspect branches, merges, commit details, and changed files. Commit and stash times use the computer’s local timezone (including daylight saving); graph rows show date and time, with seconds and timezone in details/tooltips. Clicking a local or remote branch scrolls to its tip, loading additional history when necessary.
 - **File workflow:** separate Unstaged and Staged panels, Path and Tree views, filtering, inline diffs with line numbers, Ctrl/Shift selection, file/line/hunk staging, unstaging, and confirmed discard.
 - **Git operations:** commit, create and switch branches, create tags, fetch, fast-forward-only pull, push, cherry-pick, merge, revert, soft/mixed/hard reset, clone, initialization, branch deletion, and force push with an explicit lease.
 - **Stash:** save tracked and untracked changes; click to preview, then use the context menu to apply or delete. Conflict operations expose Continue, Abort, and Skip where supported.
@@ -20,11 +20,11 @@ Easy Git takes inspiration from GitKraken's three-panel interface. It is an inde
 
 ## Debian package
 
-Download the [v0.1.1 amd64 `.deb`](https://github.com/NickCyrusss/easy_git/releases/download/v0.1.1/easy-git_0.1.1_amd64.deb) and [SHA256SUMS](https://github.com/NickCyrusss/easy_git/releases/download/v0.1.1/SHA256SUMS) from [GitHub Releases](https://github.com/NickCyrusss/easy_git/releases/tag/v0.1.1). Packages are built and tested on Ubuntu 22.04 (x86-64).
+Download the [v0.1.2 amd64 `.deb`](https://github.com/NickCyrusss/easy_git/releases/download/v0.1.2/easy-git_0.1.2_amd64.deb) and [SHA256SUMS](https://github.com/NickCyrusss/easy_git/releases/download/v0.1.2/SHA256SUMS) from [GitHub Releases](https://github.com/NickCyrusss/easy_git/releases/tag/v0.1.2). Packages are built and tested on Ubuntu 22.04 (x86-64).
 
 ```sh
 sha256sum -c SHA256SUMS
-sudo apt install ./easy-git_0.1.1_amd64.deb
+sudo apt install ./easy-git_0.1.2_amd64.deb
 ```
 
 The package includes the application-menu launcher and icon. Launch **Easy Git** or run `easy_git`; remove with `sudo apt remove easy-git`. User configuration in `~/.easy_git` is retained.
@@ -38,7 +38,7 @@ ctest --test-dir build-deb --output-on-failure
 (cd build-deb && cpack -G DEB)
 ```
 
-The `.deb` is written to `build-deb/`. Pushing a version tag matching the CMake version (for example `v0.1.1`) runs the Debian release workflow: build, test, install-check, and upload the package and checksum to GitHub Releases.
+The `.deb` is written to `build-deb/`. Pushing a version tag matching the CMake version (for example `v0.1.2`) runs the Debian release workflow: build, test, install-check, and upload the package and checksum to GitHub Releases.
 
 ## Build and run
 
@@ -109,7 +109,7 @@ For replacements, selecting either the old or new line selects both for Stage, U
 
 Open a file from **Unstaged Files** to select changed lines and click **Discard lines** (also available in the right-click menu), or use **Discard hunk** beside a `@@` header. Confirmation lists the selected lines. Discard reverses only those working-tree edits, preserves staged content and other changes, and rejects a changed preview. Partial discard supports regular text files up to 1 MiB; discarding all lines of an untracked file removes it. Discarded edits cannot be undone in the app.
 
-Click a conflicted file to open **Resolve conflict**. The upper panels show ours (index stage 2) and theirs (stage 3); the lower result can be edited directly. Choose **Use ours**, **Use theirs**, or **Use both** for each conflict block, or choose an entire version. A missing version offers **Accept deletion**; binary conflicts support entire-version selection only. **Save and mark resolved** writes and stages the result without committing. Unresolved markers or externally changed files prevent saving. The editor supports regular files up to 1 MiB. During rebase, ours/theirs follow Git's stage semantics, as explained in the dialog.
+Click a conflicted file to open **Resolve conflict**. **Current / ours** and **Incoming / theirs** appear side by side above an editable **Output**. Navigate unresolved blocks with Previous/Next or arrow keys outside text input. Check individual lines on either side and **Apply selected lines**, **Take block**, or **Take both blocks**; **Incoming first** controls the order when combining both sides. **Undo choice** restores up to 16 selection operations; manual output edits retain the text editor's own undo behavior. You can also **Use entire file** or **Accept deletion**; binary conflicts support entire-version selection only. Saving is disabled while conflict markers remain. **Save and mark resolved** writes and stages the result without committing, and rejects externally changed files or index entries. The editor supports regular files up to 1 MiB. During rebase, Current is the rebased base and Incoming is the replayed commit.
 
 Use the **Open / Clone / Initialize** choices in the repository dialog to open, clone into a new or empty folder, or initialize a folder with an initial branch name. Clone and initialization open the resulting repository automatically; initialization leaves existing files uncommitted.
 
@@ -162,9 +162,9 @@ Tests create disposable repositories under `/tmp`:
 | --- | --- |
 | `git_workflow` | Status, unusual paths, staging, commits, commit graphs, pagination, file diffs, stash, and local remote operations |
 | `git_operations` | Cherry-pick, merge, revert, reset modes, stash handling, conflict continuation/abort/skip, and discard protections |
-| `git_workflows` | Partial staging/unstaging/discard, linked replacement lines and preserved line order, selection isolation and stale-preview rejection, conflict resolution, clone/init, local/remote branch deletion, and force-push lease rejection |
+| `git_workflows` | Partial staging/unstaging/discard, linked replacement lines and preserved line order, selection isolation and stale-preview rejection, conflict resolution and leftover diff3 marker rejection, clone/init, local/remote branch deletion, and force-push lease rejection |
 | `settings_and_ai` | Configuration replacement and permissions, window-size round trips and validation, per-model settings and migration, custom model add/delete protection, OpenAI/Anthropic HTTP requests and responses, cancellation, and stale-index protection |
-| `repository_tabs` | Headless ImGui interactions, fixed sidebar headers with independent scrolling and draggable section separators, independent tabs and drafts, branch navigation, file selections, unselected row actions with mouse press/hold/release, Stage All/Unstage All without selection, toolbar Stash naming and saved content at 1080×720, summary clearing on success and retention on failure, stash grouping by base commit, paginated base loading, graph stash search and preview, batch operations, settings Save/Cancel including model add/delete, partial unstage, linked line selection with Ctrl/Shift and complete discard confirmation/cancellation, external diff refresh after edits/atomic saves/deletion/restoration, staged-preview isolation, and restart recovery |
+| `repository_tabs` | Headless ImGui interactions, fixed sidebar headers with independent scrolling and draggable section separators, independent tabs and drafts, branch navigation, file selections, unselected row actions with mouse press/hold/release, Stage All/Unstage All without selection, toolbar Stash naming and saved content at 1080×720, summary clearing on success and retention on failure, stash grouping by base commit, paginated base loading, graph stash search and preview, batch operations, settings Save/Cancel including model add/delete, partial unstage, linked line selection with Ctrl/Shift and complete discard confirmation/cancellation, external diff refresh after edits/atomic saves/deletion/restoration, staged-preview isolation, local timestamps across timezones and daylight saving, conflict line selection/order/undo and output-size protection, and restart recovery |
 
 AI tests use a local loopback HTTP server and require permission to listen on a local port. They do not call paid providers. Actual provider calls require your own API key and have not been validated by these tests.
 

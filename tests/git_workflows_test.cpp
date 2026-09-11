@@ -114,6 +114,7 @@ int main() {
         rejects([&]{git.merge("side");}); auto conflict=git.read_conflict(file(git,"file.txt"));
         require(conflict.ours=="ours\n" && conflict.theirs=="theirs\n" && !conflict.base.empty(),"Conflict stages unavailable");
         rejects([&]{git.save_resolution(conflict,conflict.working);});
+        rejects([&]{git.save_resolution(conflict,"||||||| base\nleftover\n");});
         write(repo/"file.txt","external edit\n"); rejects([&]{git.save_resolution(conflict,"resolved\n");});
         conflict=git.read_conflict(file(git,"file.txt")); git.save_resolution(conflict,"ours and theirs\n");
         require(git.checked({"ls-files","-u"}).empty() && git.checked({"show",":file.txt"})=="ours and theirs\n","Conflict was not saved and staged");

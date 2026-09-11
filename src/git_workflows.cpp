@@ -226,16 +226,18 @@ Conflict Git::read_conflict(const File& file) const {
     c.binary = c.ours.find('\0') != std::string::npos || c.theirs.find('\0') != std::string::npos || c.working.find('\0') != std::string::npos;
     return c;
 }
+bool has_conflict_markers(const std::string& text) {
+    for (const auto& line : lines(text))
+        if (line.rfind("<<<<<<<",0)==0 || line.rfind("|||||||",0)==0 || line.rfind("=======",0)==0 || line.rfind(">>>>>>>",0)==0) return true;
+    return false;
+}
 void Git::save_resolution(const Conflict& c,const std::string& result,bool remove) const {
     auto current = read_conflict(File{c.path,{}});
     if (current.stages != c.stages || current.working != c.working || current.exists != c.exists)
         throw std::runtime_error("Conflict or working file changed. Reopen the editor before saving.");
     if (result.size() > 1024*1024) throw std::runtime_error("Resolution exceeds 1 MiB.");
-    if (!remove && !c.binary) {
-        for (const auto& line : lines(result))
-            if (line.rfind("<<<<<<<",0) == 0 || line.rfind("=======",0) == 0 || line.rfind(">>>>>>>",0) == 0)
-                throw std::runtime_error("Resolve all conflict markers before marking the file resolved.");
-    }
+    if (!remove && !c.binary && has_conflict_markers(result))
+        throw std::runtime_error("Resolve all conflict markers before marking the file resolved.");
     auto path = regular_path(root_,c.path);
     if (remove) { if (c.exists) fs::remove(path); }
     else {

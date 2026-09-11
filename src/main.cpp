@@ -18,6 +18,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <sys/stat.h>
+#include <ctime>
 
 namespace {
 namespace fs = std::filesystem;
@@ -28,6 +29,17 @@ ImVec4 red(0.94f, 0.48f, 0.52f, 1);
 bool light_theme = false;
 ImFont* body_font = nullptr;
 ImFont* mono_font = nullptr;
+
+std::string local_commit_time(const std::string& date) {
+    std::tm parsed{};
+    const char* end = strptime(date.c_str(),"%Y-%m-%dT%H:%M:%S%z",&parsed);
+    if (!end || *end) return date;
+    auto offset = parsed.tm_gmtoff;
+    std::time_t instant = timegm(&parsed)-offset;
+    std::tm local{}; char result[96];
+    if (!localtime_r(&instant,&local) || !std::strftime(result,sizeof(result),"%Y-%m-%d %H:%M:%S %Z",&local)) return date;
+    return result;
+}
 
 void label(const char* text) { ImGui::TextColored(muted, "%s", text); }
 bool button(const char* text, bool enabled = true, ImVec2 size = {}) {
@@ -149,6 +161,10 @@ struct RepoTab {
     eg::Conflict conflict;
     std::vector<char> resolution;
     std::string binary_resolution;
+    std::array<std::set<int>,2> conflict_lines;
+    std::string conflict_selection_key;
+    bool incoming_first = false;
+    std::vector<std::string> resolution_undo;
     bool conflict_open = false, resolving_conflict = false, remove_resolution = false, binary_chosen = false;
     bool just_opened = false, show_diff = false, tree_view = false;
     std::string requested_open, commit_body;
@@ -427,6 +443,7 @@ struct RepoTab {
             if (r.push_selection) { pending_push = std::move(r.push); pending_kind = "force push"; hard_confirm = false; return; }
             if (r.conflict_selection) {
                 conflict = std::move(r.conflict); set_resolution(conflict.working);
+                conflict_lines = {}; conflict_selection_key.clear(); resolution_undo.clear(); incoming_first = false;
                 conflict_number = 0; remove_resolution = false; binary_chosen = false; conflict_open = true;
                 status = "Resolve conflict: " + conflict.path; return;
             }
@@ -809,7 +826,7 @@ struct RepoTab {
             if (!search[0]) ImGui::TableSetupColumn("GRAPH", ImGuiTableColumnFlags_WidthFixed, graph_width);
             ImGui::TableSetupColumn("COMMIT", ImGuiTableColumnFlags_WidthStretch, 1, 1);
             ImGui::TableSetupColumn("AUTHOR", ImGuiTableColumnFlags_WidthFixed, 100, 2);
-            ImGui::TableSetupColumn("DATE", ImGuiTableColumnFlags_WidthFixed, 90, 3);
+            ImGui::TableSetupColumn("LOCAL TIME", ImGuiTableColumnFlags_WidthFixed, 155, 3);
             ImGui::TableHeadersRow();
             ImGuiListClipper clipper; clipper.Begin(int(matches.size()), row_height);
             if (!scroll_to_commit.empty()) {
@@ -836,7 +853,7 @@ struct RepoTab {
                 if (scroll_to_commit == c.id) {
                     ImGui::SetScrollHereY(0.5f); ImGui::SetScrollX(0); scroll_to_commit.clear();
                 }
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s\n%s\n%s", c.subject.c_str(), stash ? "Stash" : c.refs.c_str(), c.id.c_str());
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s\n%s\n%s\n%s", c.subject.c_str(), stash ? "Stash" : c.refs.c_str(), c.id.c_str(),local_commit_time(c.date).c_str());
                 if (ImGui::BeginPopupContextItem()) {
                     if (stash) stash_actions(*stash);
                     else {
@@ -865,7 +882,7 @@ struct RepoTab {
                 text_clipped(draw, {p.x,p.y+8}, c.author, ImGui::GetColorU32(muted), {p.x+ImGui::GetContentRegionAvail().x,p.y+33});
                 ImGui::TableSetColumnIndex(col);
                 p = ImGui::GetCursorScreenPos();
-                text_clipped(draw, {p.x,p.y+8}, c.date.substr(0,10), ImGui::GetColorU32(muted), {p.x+100,p.y+33});
+                text_clipped(draw, {p.x,p.y+8}, local_commit_time(c.date).substr(0,16), ImGui::GetColorU32(muted), {p.x+ImGui::GetContentRegionAvail().x,p.y+33});
                 ImGui::PopID();
             }
             if (matches.empty()) {
@@ -969,61 +986,123 @@ struct RepoTab {
         auto block = blocks[std::min(conflict_number,int(blocks.size())-1)]; std::string text(resolution.data());
         auto closing = block.closing;
         auto ours = text.substr(block.ours,block.base-block.ours), theirs = text.substr(block.theirs,closing-block.theirs);
-        text.replace(block.begin,block.end-block.begin,choice == 0 ? ours : choice == 1 ? theirs : ours+theirs);
-        set_resolution(text); conflict_number = 0;
+        text.replace(block.begin,block.end-block.begin,choice == 0 ? ours : choice == 1 ? theirs : incoming_first ? theirs+ours : ours+theirs);
+        replace_resolution(text);
+    }
+    void replace_resolution(const std::string& text) {
+        if (text.size()>1024*1024) { error="Resolution exceeds 1 MiB."; return; }
+        if (resolution_undo.size()==16) resolution_undo.erase(resolution_undo.begin());
+        resolution_undo.emplace_back(resolution.data());
+        set_resolution(text); conflict_selection_key.clear(); conflict_lines = {};
+    }
+    std::array<std::vector<std::string>,2> conflict_choices() {
+        std::array<std::vector<std::string>,2> result;
+        auto blocks=conflict_blocks(); if (blocks.empty()) return result;
+        conflict_number=std::clamp(conflict_number,0,int(blocks.size())-1);
+        auto b=blocks[conflict_number]; std::string text(resolution.data());
+        auto key=std::to_string(b.begin)+":"+text.substr(b.begin,b.end-b.begin);
+        if (key!=conflict_selection_key) { conflict_lines={}; conflict_selection_key=std::move(key); }
+        for (int side=0;side<2;++side) {
+            size_t start=side==0 ? b.ours : b.theirs, end=side==0 ? b.base : b.closing;
+            while (start<end) {
+                auto newline=text.find('\n',start);
+                size_t next=newline==std::string::npos ? end : std::min(end,newline+1);
+                result[side].push_back(text.substr(start,next-start)); start=next;
+            }
+        }
+        return result;
+    }
+    void apply_conflict_lines() {
+        auto choices=conflict_choices(); auto blocks=conflict_blocks();
+        if (blocks.empty() || (conflict_lines[0].empty() && conflict_lines[1].empty())) return;
+        std::string replacement;
+        for (int turn=0;turn<2;++turn) {
+            int side=incoming_first ? 1-turn : turn;
+            for (int i : conflict_lines[side]) if (i>=0 && i<int(choices[side].size())) replacement+=choices[side][i];
+        }
+        auto block=blocks[conflict_number]; std::string text(resolution.data());
+        text.replace(block.begin,block.end-block.begin,replacement); replace_resolution(text);
     }
     void conflict_dialog() {
         if (conflict_open && !ImGui::IsPopupOpen("Resolve conflict")) ImGui::OpenPopup("Resolve conflict");
         auto size = ImGui::GetMainViewport()->WorkSize;
-        ImGui::SetNextWindowSize({std::min(1080.0f,size.x-40),std::min(760.0f,size.y-50)},ImGuiCond_Appearing);
+        ImGui::SetNextWindowSize({std::min(1280.0f,size.x-40),std::min(850.0f,size.y-50)},ImGuiCond_Appearing);
         if (!ImGui::BeginPopupModal("Resolve conflict",nullptr)) return;
         if (!conflict_open) { ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
         ImGui::TextWrapped("%s",visible_path(conflict.path).c_str());
-        ImGui::TextWrapped("Stage 2 = ours; stage 3 = theirs. During rebase, these refer to the rebased base and replayed commit.");
+        label("Compare versions, choose lines or blocks, then review the output.");
+        if (repo.operation == "rebase") ImGui::TextWrapped("Rebase: Current is the rebased base; Incoming is the commit being replayed.");
         ImGui::BeginDisabled(busy());
-        if (ImGui::BeginTable("versions",2,ImGuiTableFlags_SizingStretchSame)) {
-            for (int side = 0; side < 2; ++side) {
+        auto blocks=conflict_blocks();
+        if (!blocks.empty() && !conflict.binary && !remove_resolution) {
+            conflict_number=std::clamp(conflict_number,0,int(blocks.size())-1);
+            if (button("< Previous",conflict_number>0)) --conflict_number;
+            ImGui::SameLine(); if (button("Next >",conflict_number+1<int(blocks.size()))) ++conflict_number;
+            if (!ImGui::GetIO().WantTextInput) {
+                if (ImGui::IsKeyPressed(ImGuiKey_UpArrow) && conflict_number>0) --conflict_number;
+                if (ImGui::IsKeyPressed(ImGuiKey_DownArrow) && conflict_number+1<int(blocks.size())) ++conflict_number;
+            }
+            ImGui::SameLine(); ImGui::Text("Conflict %d / %zu",conflict_number+1,blocks.size());
+        }
+        auto choices=conflict_choices();
+        float source_height=std::clamp(ImGui::GetContentRegionAvail().y*0.38f,100.0f,250.0f);
+        if (ImGui::BeginTable("versions",2,ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_Resizable)) {
+            for (int side=0;side<2;++side) {
                 ImGui::TableNextColumn(); ImGui::PushID(side);
-                auto& content = side == 0 ? conflict.ours : conflict.theirs;
-                bool exists = side == 0 ? conflict.has_ours : conflict.has_theirs;
-                ImGui::TextUnformatted(side == 0 ? "OURS (stage 2)" : "THEIRS (stage 3)");
-                if (button(exists ? "Use entire version" : "Accept deletion")) {
-                    remove_resolution = !exists; binary_chosen = true; binary_resolution = content; set_resolution(content);
+                const auto& content=side==0 ? conflict.ours : conflict.theirs;
+                bool exists=side==0 ? conflict.has_ours : conflict.has_theirs;
+                ImGui::TextColored(side==0 ? mint : ImVec4(0.45f,0.65f,0.95f,1),"%s",side==0 ? "CURRENT / ours" : "INCOMING / theirs");
+                if (button(exists ? "Use entire file" : "Accept deletion")) {
+                    replace_resolution(content); remove_resolution=!exists; binary_chosen=true; binary_resolution=content;
                 }
-                ImGui::BeginChild("source",{0,145},ImGuiChildFlags_Borders,ImGuiWindowFlags_HorizontalScrollbar);
+                ImGui::SameLine();
+                if (button("Take block",!blocks.empty() && !conflict.binary && !remove_resolution)) choose_conflict_block(side);
+                ImGui::BeginChild("source",{0,source_height},ImGuiChildFlags_Borders,ImGuiWindowFlags_HorizontalScrollbar);
                 if (!exists) label("Deleted in this version");
                 else if (conflict.binary) label("Binary file: choose an entire version");
-                else { ImGui::PushFont(mono_font,13); ImGui::TextUnformatted(content.c_str()); ImGui::PopFont(); }
+                else {
+                    ImGui::PushFont(mono_font,13);
+                    if (!blocks.empty() && !remove_resolution) {
+                        for (int i=0;i<int(choices[side].size());++i) {
+                            ImGui::PushID(i); bool selected=conflict_lines[side].count(i);
+                            if (ImGui::Checkbox("##include",&selected)) {
+                                if (selected) conflict_lines[side].insert(i); else conflict_lines[side].erase(i);
+                            }
+                            ImGui::SameLine(); ImGui::TextColored(muted,"%3d",i+1); ImGui::SameLine();
+                            auto line=choices[side][i]; if (!line.empty() && line.back()=='\n') line.pop_back();
+                            ImGui::TextUnformatted(line.c_str()); ImGui::PopID();
+                        }
+                        if (choices[side].empty()) label("No lines on this side of the conflict");
+                    } else ImGui::TextUnformatted(content.c_str());
+                    ImGui::PopFont();
+                }
                 ImGui::EndChild(); ImGui::PopID();
             }
             ImGui::EndTable();
         }
         if (!conflict.binary && !remove_resolution) {
-            auto blocks = conflict_blocks();
-            if (!blocks.empty()) {
-                conflict_number = std::min(conflict_number,int(blocks.size())-1);
-                auto preview = "Conflict " + std::to_string(conflict_number+1) + " / " + std::to_string(blocks.size());
-                ImGui::SetNextItemWidth(155);
-                if (ImGui::BeginCombo("##conflict_block",preview.c_str())) {
-                    for (int i=0;i<int(blocks.size());++i) if (ImGui::Selectable(("Conflict "+std::to_string(i+1)).c_str(),i==conflict_number)) conflict_number=i;
-                    ImGui::EndCombo();
-                }
-                ImGui::SameLine(); if (button("Use ours")) choose_conflict_block(0);
-                ImGui::SameLine(); if (button("Use theirs")) choose_conflict_block(1);
-                ImGui::SameLine(); if (button("Use both")) choose_conflict_block(2);
+            if (button("Apply selected lines",!conflict_lines[0].empty() || !conflict_lines[1].empty())) apply_conflict_lines();
+            ImGui::SameLine(); if (button("Take both blocks",!conflict_blocks().empty())) choose_conflict_block(2);
+            ImGui::SameLine(); ImGui::Checkbox("Incoming first",&incoming_first);
+            ImGui::SameLine();
+            if (button("Undo choice",!resolution_undo.empty())) {
+                auto previous=std::move(resolution_undo.back()); resolution_undo.pop_back();
+                set_resolution(previous); conflict_selection_key.clear(); conflict_lines={};
             }
-            ImGui::TextUnformatted("RESULT - edit below, then save and mark resolved");
+            bool unresolved=eg::has_conflict_markers(resolution.data());
+            ImGui::TextColored(unresolved ? ImVec4(0.9f,0.65f,0.3f,1) : mint,"OUTPUT - %s",unresolved ? "unresolved conflicts remain" : "ready to save");
             ImGui::PushFont(mono_font,14);
-            ImGui::InputTextMultiline("##resolution",resolution.data(),resolution.size(),{-1,std::max(70.0f,ImGui::GetContentRegionAvail().y-54)},ImGuiInputTextFlags_AllowTabInput);
+            ImGui::InputTextMultiline("##resolution",resolution.data(),resolution.size(),{-1,std::max(70.0f,ImGui::GetContentRegionAvail().y-58)},ImGuiInputTextFlags_AllowTabInput);
             ImGui::PopFont();
-        } else ImGui::TextUnformatted(remove_resolution ? "Result: delete this file" : "Choose a whole version to resolve this binary file.");
-        if (button("Save and mark resolved",!conflict.binary || binary_chosen)) {
-            auto saved = conflict; bool remove = remove_resolution;
-            auto result = conflict.binary ? binary_resolution : std::string(resolution.data());
+        } else ImGui::TextUnformatted(remove_resolution ? "Output: delete this file" : binary_chosen ? "Output: selected binary version" : "Choose a whole version for the output.");
+        bool can_save=remove_resolution || (conflict.binary ? binary_chosen : !eg::has_conflict_markers(resolution.data()));
+        if (button("Save and mark resolved",can_save)) {
+            auto saved=conflict; bool remove=remove_resolution;
+            auto result=conflict.binary ? binary_resolution : std::string(resolution.data());
             mutate("Resolve conflict",[saved,result,remove](const eg::Git& git) { git.save_resolution(saved,result,remove); });
-            resolving_conflict = true;
+            resolving_conflict=true;
         }
-        ImGui::SameLine(); if (button("Cancel")) { conflict_open = false; ImGui::CloseCurrentPopup(); }
+        ImGui::SameLine(); if (button("Cancel")) { conflict_open=false; ImGui::CloseCurrentPopup(); }
         ImGui::EndDisabled(); ImGui::EndPopup();
     }
     void diff_view() {
@@ -1323,7 +1402,7 @@ struct RepoTab {
             ImGui::BeginChild("commit_metadata",{0,132});
             ImGui::TextWrapped("%s",commit_body.empty() ? viewed_commit.subject.c_str() : commit_body.c_str());
             ImGui::Spacing(); ImGui::TextColored(muted,"%s",viewed_commit.author.c_str());
-            ImGui::TextColored(muted,"%s",viewed_commit.date.c_str());
+            ImGui::TextColored(muted,"%s",local_commit_time(viewed_commit.date).c_str());
             ImGui::EndChild();
             if (stash_view) ImGui::TextWrapped("Saved working changes, including saved untracked files");
             else if (viewed_commit.parents.size() > 1) ImGui::TextWrapped("Changes against the first parent");

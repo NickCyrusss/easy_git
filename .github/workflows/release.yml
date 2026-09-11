@@ -7,9 +7,9 @@ on:
       tag:
         description: Existing version tag to publish
         required: true
-        default: v0.1.1
+        default: v0.1.2
 env:
-  RELEASE_TAG: ${{ inputs.tag || (github.ref_type == 'tag' && github.ref_name) || 'v0.1.1' }}
+  RELEASE_TAG: ${{ inputs.tag || (github.ref_type == 'tag' && github.ref_name) || 'v0.1.2' }}
 permissions:
   contents: write
 jobs:
