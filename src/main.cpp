@@ -197,6 +197,7 @@ struct RepoTab {
     std::string selected_ref, scroll_to_commit;
     bool stash_view = false, restore_index = false, hard_confirm = false;
     int reset_mode = 1, mainline = 1;
+    char sidebar_search[256] = {};
     char path[4096] = {}, search[256] = {}, message[8192] = {}, description[8192] = {}, new_name[256] = {}, file_search[256] = {};
     int limit = 300;
     float sidebar_width = 210, detail_width = 410;
@@ -638,7 +639,7 @@ struct RepoTab {
         ImGui::EndDisabled();
         ImGui::SameLine(); if (button("Fetch", ready(), {70,36})) command("Fetch", {"fetch", "--all"});
         ImGui::SameLine(); if (button("Pull", idle(), {64,36})) command("Pull", {"pull", "--ff-only"});
-        ImGui::SameLine(); if (button("Push", ready(), {64,36})) command("Push", {"push"});
+        ImGui::SameLine(); if (button("Push", ready(), {64,36})) mutate("Push", [](const eg::Git& git) { git.push(); });
         if (ImGui::BeginPopupContextItem("push_menu")) {
             if (ImGui::MenuItem("Force push with lease...",nullptr,false,ready() && repo.has_head)) prepare_force_push();
             ImGui::EndPopup();
@@ -654,10 +655,16 @@ struct RepoTab {
         ImGui::EndChild();
     }
 
+    bool sidebar_matches(const std::string& name) const {
+        std::string query = sidebar_search;
+        auto lower = [](unsigned char c) { return c >= 'A' && c <= 'Z' ? c + ('a'-'A') : c; };
+        return std::search(name.begin(),name.end(),query.begin(),query.end(),
+            [&](unsigned char a,unsigned char b) { return lower(a)==lower(b); }) != name.end() || query.empty();
+    }
     void refs_section(const std::string& prefix) {
         int count = 0;
         for (const auto& ref : repo.refs) {
-            if (ref.full.rfind(prefix,0) != 0) continue;
+            if (ref.full.rfind(prefix,0) != 0 || !sidebar_matches(ref.name)) continue;
             ImGui::PushID(ref.full.c_str()); ++count;
             auto pos = ImGui::GetCursorScreenPos();
             bool current = ref.full == "refs/heads/" + repo.branch;
@@ -686,7 +693,7 @@ struct RepoTab {
             }
             ImGui::PopID();
         }
-        if (!count) label("  None");
+        if (!count) label(sidebar_search[0] ? "  No matches" : "  None");
         if (prefix == "refs/heads/" && button("+ New branch",idle(),{-1,0})) { new_kind = "branch"; new_name[0] = 0; }
         if (prefix == "refs/tags/" && button("+ New tag",ready() && repo.has_head,{-1,0})) { new_kind = "tag"; new_name[0] = 0; }
     }
@@ -702,9 +709,13 @@ struct RepoTab {
         return heights;
     }
     void sidebar() {
+        ImGui::SetNextItemWidth(-1);
+        ImGui::InputTextWithHint("##sidebar_search","Filter sidebar...",sidebar_search,sizeof(sidebar_search));
         section("WORKSPACE");
-        if (ImGui::Selectable("Working changes", workspace, 0, {0,30})) select_workspace();
-        label((std::to_string(repo.files.size()) + " changed files").c_str());
+        if (sidebar_matches("Working changes")) {
+            if (ImGui::Selectable("Working changes", workspace, 0, {0,30})) select_workspace();
+            label((std::to_string(repo.files.size()) + " changed files").c_str());
+        } else label("  No matches");
         const char* titles[] = {"LOCAL","REMOTE","TAGS","STASH"};
         const char* prefixes[] = {"refs/heads/","refs/remotes/","refs/tags/"};
         auto pos = ImGui::GetCursorScreenPos();
@@ -752,7 +763,10 @@ struct RepoTab {
         }
     }
     void stash_section() {
+        int count = 0;
         for (const auto& stash : repo.stashes) {
+            if (!sidebar_matches(stash.subject)) continue;
+            ++count;
             ImGui::PushID(stash.ref.c_str());
             auto pos = ImGui::GetCursorScreenPos();
             if (ImGui::Selectable("##stash",stash_view && viewed_stash.id == stash.id,0,{0,26}) && ready()) select_stash(stash);
@@ -765,7 +779,7 @@ struct RepoTab {
             }
             ImGui::PopID();
         }
-        if (repo.stashes.empty()) label("  None");
+        if (!count) label(sidebar_search[0] ? "  No matches" : "  None");
         if (button("Stash changes",idle() && repo.has_head && !repo.files.empty(),{-1,0})) {
             new_kind = "stash"; new_name[0] = 0;
         }

@@ -107,6 +107,34 @@ int main() {
         require(!a->sidebar_open[0] && a->sidebar_open[3],"Local header did not collapse independently");
         io.AddMouseButtonEvent(0,true); frame(app); io.AddMouseButtonEvent(0,false); frame(app); frame(app);
         require(a->sidebar_open[0],"Collapsed Local header was not available to reopen");
+        {
+            auto saved_stashes = a->repo.stashes;
+            a->repo.refs.clear(); a->repo.stashes.clear();
+            for (int i=0;i<20;++i) {
+                auto name = i==0 ? std::string("Needle/测试") : "other"+std::to_string(i);
+                for (const char* prefix : {"refs/heads/","refs/remotes/","refs/tags/"})
+                    a->repo.refs.push_back({std::string(prefix)+name,name,"unused"});
+                a->repo.stashes.push_back({"stash@{"+std::to_string(i)+"}","id"+std::to_string(i),name,"","",""});
+            }
+            frame(app); frame(app);
+            auto sizes = [&] {
+                std::vector<float> result;
+                for (auto* window : GImGui->Windows)
+                    if (window->Active && window->ParentWindow==sidebar) result.push_back(window->ContentSize.y);
+                return result;
+            };
+            auto unfiltered = sizes();
+            snprintf(a->sidebar_search,sizeof(a->sidebar_search),"needle/测试"); frame(app); frame(app);
+            auto filtered = sizes();
+            require(unfiltered.size()==4 && filtered.size()==4,"Sidebar filtering hid section headers");
+            for (size_t i=0;i<4;++i) require(filtered[i]<unfiltered[i],"Sidebar filter did not affect every section");
+            require(a->sidebar_matches("NEEDLE/测试") && !a->sidebar_matches("other") && !b->sidebar_search[0],"Sidebar matching or per-tab isolation failed");
+            snprintf(a->sidebar_search,sizeof(a->sidebar_search),"WORKING");
+            require(a->sidebar_matches("Working changes") && !a->sidebar_matches("Needle/测试"),"Workspace filter did not match");
+            a->sidebar_search[0]=0; frame(app); frame(app);
+            require(sizes()==unfiltered,"Clearing sidebar filter did not restore entries");
+            a->repo.stashes=std::move(saved_stashes);
+        }
         a->repo.refs=std::move(real_refs); io.DisplaySize={1440,900}; frame(app);
         snprintf(a->message,sizeof(a->message),"Draft for A"); snprintf(a->description,sizeof(a->description),"Description A");
         snprintf(b->message,sizeof(b->message),"Draft for B");

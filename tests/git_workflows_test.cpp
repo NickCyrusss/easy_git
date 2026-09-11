@@ -153,6 +153,25 @@ int main() {
         git.checked({"fetch","origin"}); git.checked({"push","origin","main:temporary"}); git.checked({"fetch","origin"});
         for(auto r:git.load().refs) if(r.full=="refs/remotes/origin/temporary") git.delete_branch(r);
         require(eg::Git(remote.string()).run({"show-ref","--verify","refs/heads/temporary"}).code!=0,"Remote branch not deleted");
+        git.checked({"switch","-c","feature/首次推送"});
+        git.push();
+        require(git.checked({"rev-parse","@{upstream}"})==git.checked({"rev-parse","HEAD"}) &&
+                git.checked({"config","branch.feature/首次推送.remote"})=="origin\n","First push did not publish the branch and set its upstream");
+        git.checked({"remote","rename","origin","backup"});
+        write(repo/"published","second push"); git.stage({"published"}); git.commit("Second push"); git.push();
+        auto pushed = git.checked({"rev-parse","HEAD"});
+        require(eg::Git(remote.string()).checked({"rev-parse","feature/首次推送"})==pushed,"Existing upstream was not respected");
+        git.checked({"remote","rename","backup","origin"});
+        other.checked({"fetch","origin"}); other.checked({"switch","--track","origin/feature/首次推送"});
+        write(root/"cloned repo/remote-only","advanced"); other.stage({"remote-only"}); other.commit("Remote branch advanced"); other.push();
+        auto remote_tip = other.checked({"rev-parse","HEAD"});
+        write(repo/"local-only","diverged"); git.stage({"local-only"}); git.commit("Local branch diverged");
+        rejects([&]{git.push();});
+        git.checked({"branch","--unset-upstream"}); rejects([&]{git.push();});
+        require(eg::Git(remote.string()).checked({"rev-parse","feature/首次推送"})==remote_tip &&
+                git.run({"config","branch.feature/首次推送.remote"}).code!=0,"Rejected push changed remote history or configured upstream");
+        git.checked({"switch","--detach"}); rejects([&]{git.push();});
+        git.checked({"switch","-c","without-origin"}); git.checked({"remote","remove","origin"}); rejects([&]{git.push();});
         std::cout<<"PASS: partial staging/unstaging, conflict editor, init/clone, branch deletion, force-with-lease\n";
         fs::remove_all(root); return 0;
     } catch(const std::exception& e) { std::cerr<<"FAIL: "<<e.what()<<"\nFixture: "<<root<<'\n'; return 1; }

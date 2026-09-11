@@ -85,6 +85,7 @@ public:
     static void clone(const std::string& url, const std::string& destination, std::shared_ptr<std::atomic_bool> cancel = {});
     static void initialize(const std::string& destination, const std::string& branch);
     void delete_branch(const Ref& ref, bool force = false) const;
+    void push() const;
     PushTarget push_target() const;
     void force_push(const PushTarget& target) const;
 private:

@@ -273,6 +273,15 @@ void Git::delete_branch(const Ref& ref,bool force) const {
         checked({"push","--force-with-lease="+branch+":"+ref.id,"--",remote,":"+branch});
     } else throw std::runtime_error("Select a local or remote branch.");
 }
+void Git::push() const {
+    auto head = run({"symbolic-ref","--quiet","HEAD"});
+    if (head.code) throw std::runtime_error("Switch to a local branch before pushing.");
+    auto branch = trim(head.out);
+    checked({"rev-parse","--verify","HEAD"});
+    auto upstream = trim(checked({"for-each-ref","--format=%(upstream)",branch}));
+    if (upstream.empty()) checked({"push","--set-upstream","--","origin",branch+":"+branch});
+    else checked({"push"});
+}
 PushTarget Git::push_target() const {
     PushTarget target; target.branch = trim(checked({"symbolic-ref","--quiet","--short","HEAD"}));
     target.local = trim(checked({"rev-parse","--verify","HEAD"}));
