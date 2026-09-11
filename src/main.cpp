@@ -127,7 +127,7 @@ void theme(bool light = false) {
 }
 
 struct JobResult {
-    bool external_diff = false;
+    bool external_diff = false, auto_fetch = false;
     eg::Snapshot snapshot;
     bool ai_generated = false;
     eg::CommitMessage generated;
@@ -204,6 +204,7 @@ struct RepoTab {
     std::array<float,4> sidebar_weights = {1,1,1,1};
     bool workspace = true, selected_staged = false, opening = false;
     double diff_checked_at = 0;
+    bool fetch_pending = false, fetching = false;
     std::string watched_stamp;
     bool busy() const { return job.valid(); }
     bool ready() const { return !repo.root.empty() && !busy(); }
@@ -435,10 +436,34 @@ struct RepoTab {
     void command(std::string activity, std::vector<std::string> args) {
         mutate(std::move(activity), [args](const eg::Git& git) { git.checked(args); });
     }
+    void auto_fetch() {
+        if (!ready() || conflict_open || !pending_kind.empty() || !error.empty()) return;
+        if (!fetch_pending) return;
+        fetch_pending = false; fetching = true;
+        auto root = repo.root; auto stop = cancel; int count = limit;
+        *stop = false; status = "Auto-fetching...";
+        job = std::async(std::launch::async,[root,stop,count] {
+            JobResult r; r.auto_fetch = true;
+            try {
+                eg::Git git(root,stop);
+                git.checked({"fetch","--all"});
+                r.snapshot = git.load(count); r.reload = true;
+                r.message = "Auto-fetch completed";
+            } catch (const std::exception& e) { r.message = std::string("Auto-fetch failed: ") + e.what(); }
+            return r;
+        });
+    }
     void poll() {
         if (!busy() || job.wait_for(std::chrono::seconds(0)) != std::future_status::ready) return;
         try {
             auto r = job.get(); previewing = false; generating = false;
+            if (r.auto_fetch) {
+                fetching = false;
+                if (r.reload) {
+                    repo = std::move(r.snapshot); rebuild_history(); rebuild_file_lists();
+                }
+                status = std::move(r.message); return;
+            }
             if (!r.created_path.empty()) { requested_open = r.created_path; status = r.message; return; }
             if (r.push_selection) { pending_push = std::move(r.push); pending_kind = "force push"; hard_confirm = false; return; }
             if (r.conflict_selection) {
@@ -495,7 +520,7 @@ struct RepoTab {
             status = r.message;
             error = r.error;
         } catch (const std::exception& e) {
-            previewing = false; generating = false;
+            previewing = false; generating = false; fetching = false;
             error = e.what(); status = "Operation failed. Review the error; refresh if needed.";
         }
         if (queued_preview_kind >= 0) {
@@ -1778,7 +1803,16 @@ struct App {
         if (tab->message[0] || tab->description[0]) pending_close = id;
         else close_tab(id);
     }
-    void frame() {
+    int fetch_active = 0;
+    void schedule_fetch(bool foreground) {
+        if (active != fetch_active) {
+            fetch_active = active;
+            if (auto* tab = find(active); tab && !tab->fetching) tab->fetch_pending = true;
+        }
+        if (!foreground) return;
+        for (auto& tab : tabs) tab->auto_fetch();
+    }
+    void frame(bool foreground = false) {
         for (auto& tab : tabs) tab->poll();
         // Resolve subfolder/symlink aliases only after Git has identified the worktree root.
         for (size_t i=0;i<tabs.size();) {
@@ -1862,6 +1896,7 @@ struct App {
         }
         settings_dialog();
         persist();
+        schedule_fetch(foreground && !ImGui::IsPopupOpen(nullptr,ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel));
         ImGui::End();
     }
 };
@@ -1934,7 +1969,7 @@ int main(int argc, char** argv) {
         glfwPollEvents();
         if (capture_window(window,app.settings.window)) app.window_changed_at = ImGui::GetTime();
         ImGui_ImplOpenGL3_NewFrame(); ImGui_ImplGlfw_NewFrame(); ImGui::NewFrame();
-        app.frame(); ImGui::Render();
+        app.frame(glfwGetWindowAttrib(window,GLFW_FOCUSED) && !glfwGetWindowAttrib(window,GLFW_ICONIFIED)); ImGui::Render();
         int w,h; glfwGetFramebufferSize(window,&w,&h);
         glViewport(0,0,w,h); glClearColor(0.09f,0.1f,0.14f,1); glClear(GL_COLOR_BUFFER_BIT);
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
