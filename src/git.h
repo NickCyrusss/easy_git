@@ -28,6 +28,7 @@ struct Commit {
     std::string id, author, date, subject, refs;
     std::vector<std::string> parents;
 };
+struct FileRevision { Commit commit; File file; };
 struct Ref { std::string full, name, id; };
 struct Stash { std::string ref, id, subject, author, date, parent; };
 struct Snapshot {
@@ -61,6 +62,7 @@ public:
     std::vector<File> commit_files(const Commit& commit) const;
     std::string commit_diff(const Commit& commit, const File& file) const;
     Commit read_commit(const std::string& id) const;
+    std::vector<FileRevision> file_history(const std::string& path, const std::string& base, int limit = 100) const;
     std::vector<File> stash_files(const Stash& stash) const;
     std::string stash_diff(const Stash& stash, const File& file) const;
     void apply_stash(const Stash& stash, bool restore_index = false) const;

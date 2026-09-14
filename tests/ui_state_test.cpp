@@ -572,6 +572,28 @@ int main() {
             require(!switching.busy(),"Refresh repeated without switching repositories");
             switching.shutdown();
         }
+        {
+            RepoTab history_tab; history_tab.repo=eg::Git(root_b.string()).load();
+            auto wait_history = [&] {
+                auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(10);
+                while (history_tab.busy()) {
+                    history_tab.poll(); std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                    require(std::chrono::steady_clock::now()<deadline,"File history did not finish");
+                }
+                require(history_tab.history_error.empty(),history_tab.history_error.c_str());
+            };
+            history_tab.show_diff=true; history_tab.selected_file="kept preview"; history_tab.set_detail("kept diff");
+            snprintf(history_tab.message,sizeof(history_tab.message),"kept draft");
+            history_tab.open_file_history({"src/shared.txt"},0); wait_history();
+            require(history_tab.history_open && !history_tab.file_revisions.empty() && history_tab.history_selected==0 && !history_tab.history_patch.empty(),"File history did not open with its first diff");
+            history_tab.select_file_revision(int(history_tab.file_revisions.size())-1); wait_history();
+            require(history_tab.selected_file=="kept preview" && history_tab.detail=="kept diff" && std::string(history_tab.message)=="kept draft","History browsing replaced the workspace preview or draft");
+            history_tab.viewed_commit=history_tab.file_revisions.back().commit;
+            history_tab.open_file_history(history_tab.file_revisions.back().file,2); wait_history();
+            require(history_tab.history_base==history_tab.viewed_commit.id,"Committed file history used HEAD instead of the selected commit");
+            history_tab.open_file_history({"no-history.txt"},1); wait_history();
+            require(history_tab.file_revisions.empty() && history_tab.history_selected==-1,"New file did not show empty history");
+        }
         restored.shutdown(); ImGui::DestroyContext(); fs::remove_all(base); return 0;
     } catch (const std::exception& e) {
         std::cerr << "FAIL: " << e.what() << '\n';

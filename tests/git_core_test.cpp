@@ -155,6 +155,31 @@ int main(int argc, char** argv) {
 
         write(root / "src" / "app.cpp","int main() {\n    // Restore window state\n    return 0;\n}\n");
         git.stage(file_named(git.load(),"src/app.cpp"));
+        {
+            auto history_root = base/"file-history"; fs::create_directory(history_root);
+            eg::Git history(history_root.string()); history.checked({"init","--initial-branch=main"});
+            history.checked({"config","user.name","History Tester"}); history.checked({"config","user.email","history@example.invalid"});
+            history.checked({"config","commit.gpgsign","false"});
+            std::string old_name="old 中文\nfile.txt", new_name=":(glob)new [x].txt";
+            write(history_root/old_name,"one\ntwo\nthree\n"); history.stage({old_name}); history.commit("Create file");
+            auto first = history.read_commit("HEAD");
+            history.checked({"mv","--",old_name,new_name}); history.commit("Rename file");
+            write(history_root/new_name,"ONE\ntwo\nthree\n"); history.stage({new_name}); history.commit("Modify file");
+            auto modified = history.read_commit("HEAD");
+            history.checked({"rm","--",new_name}); history.commit("Delete file");
+            auto revisions = history.file_history(new_name,"HEAD");
+            require(revisions.size()==4 && revisions[0].file.index=='D' && revisions[1].commit.id==modified.id &&
+                    revisions[2].file.original==old_name && revisions[3].file.path==old_name && revisions[3].commit.id==first.id,
+                    "File history lost deletion, rename, root commit or literal paths");
+            require(history.commit_diff(revisions[1].commit,revisions[1].file).find("+ONE")!=std::string::npos &&
+                    history.commit_diff(revisions[3].commit,revisions[3].file).find("+one")!=std::string::npos,"Historical diff used the wrong path or revision");
+            require(history.file_history(new_name,modified.id,2).size()==2 && history.file_history("never-committed","HEAD").empty(),"History limit, base revision or empty history failed");
+            history.checked({"switch","-c","history-side",modified.id});
+            write(history_root/"other.txt","side\n"); history.stage({"other.txt"}); history.commit("Other file");
+            history.checked({"switch","main"}); history.checked({"merge","--no-ff","history-side","-m","Merge side"});
+            auto merged = history.file_history(new_name,"HEAD");
+            require(!merged.empty() && std::all_of(merged.begin(),merged.end(),[&](const auto& r) { return r.file.path==new_name || r.file.path==old_name; }),"Merge history included an unrelated file");
+        }
         std::cout << "PASS: empty repo, literal paths, diff, stage/unstage, commit, rename, merge graph, pagination, detached HEAD, stash and local remote\n";
         if (keep) std::cout << root.string() << '\n';
         else fs::remove_all(base);

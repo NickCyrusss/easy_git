@@ -277,6 +277,29 @@ std::vector<File> parse_changed_files(const std::string& bytes) {
     }
     return files;
 }
+std::vector<FileRevision> Git::file_history(const std::string& path, const std::string& base, int limit) const {
+    if (path.empty() || base.empty() || limit < 1) return {};
+    auto bytes = checked({"log","--follow","--diff-merges=first-parent","--name-status","-z",
+        "--format=%x00%H%x00%P%x00%an%x00%aI%x00%s%x00%D","-n",std::to_string(limit),"--end-of-options",base,"--",path});
+    std::vector<FileRevision> result;
+    size_t pos = 0;
+    while (pos < bytes.size()) {
+        if (bytes[pos++] != '\0') throw std::runtime_error("Invalid file history record");
+        size_t begin = pos;
+        for (int i=0;i<6;++i) field(bytes,pos);
+        auto commit = parse_log(bytes.substr(begin,pos-begin)).front();
+        if (pos < bytes.size() && bytes[pos]=='\n') ++pos;
+        begin = pos;
+        while (pos < bytes.size() && bytes[pos]!='\0') {
+            auto status = field(bytes,pos);
+            field(bytes,pos);
+            if (!status.empty() && (status[0]=='R' || status[0]=='C')) field(bytes,pos);
+        }
+        for (auto& file : parse_changed_files(bytes.substr(begin,pos-begin)))
+            result.push_back({commit,std::move(file)});
+    }
+    return result;
+}
 std::vector<File> Git::commit_files(const Commit& commit) const {
     std::vector<std::string> args = {"diff-tree", "--no-commit-id", "--root", "-r", "-M", "--name-status", "-z"};
     if (!commit.parents.empty()) args.push_back(commit.parents.front());

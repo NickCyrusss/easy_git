@@ -10,11 +10,11 @@
 
 ## Debian 安装包
 
-从 [GitHub Releases](https://github.com/NickCyrusss/easy_git/releases/tag/v0.1.2) 下载 [v0.1.2 amd64 安装包](https://github.com/NickCyrusss/easy_git/releases/download/v0.1.2/easy-git_0.1.2_amd64.deb) 和 [SHA256SUMS](https://github.com/NickCyrusss/easy_git/releases/download/v0.1.2/SHA256SUMS)。安装包在 Ubuntu 22.04（x86-64）上构建和验证。
+从 [GitHub Releases](https://github.com/NickCyrusss/easy_git/releases/tag/v0.1.3) 下载 [v0.1.3 amd64 安装包](https://github.com/NickCyrusss/easy_git/releases/download/v0.1.3/easy-git_0.1.3_amd64.deb) 和 [SHA256SUMS](https://github.com/NickCyrusss/easy_git/releases/download/v0.1.3/SHA256SUMS)。安装包在 Ubuntu 22.04（x86-64）上构建和验证。
 
 ```sh
 sha256sum -c SHA256SUMS
-sudo apt install ./easy-git_0.1.2_amd64.deb
+sudo apt install ./easy-git_0.1.3_amd64.deb
 ```
 
 包含应用菜单入口和图标。安装后打开 **Easy Git** 或运行 `easy_git`；卸载使用 `sudo apt remove easy-git`，保留用户目录中的 `~/.easy_git` 配置。
@@ -28,7 +28,7 @@ ctest --test-dir build-deb --output-on-failure
 (cd build-deb && cpack -G DEB)
 ```
 
-产物位于 `build-deb/`。推送与 CMake 版本一致的标签（如 `v0.1.2`）会运行 Debian 发布工作流，依次构建、测试、验证安装，并上传安装包和校验文件至 GitHub Releases。
+产物位于 `build-deb/`。推送与 CMake 版本一致的标签（如 `v0.1.3`）会运行 Debian 发布工作流，依次构建、测试、验证安装，并上传安装包和校验文件至 GitHub Releases。
 
 ## 构建与启动
 
@@ -98,12 +98,14 @@ ImGui 固定为 `v1.92.5`，GLFW 固定为 `3.4`，首次配置时由 CMake 下�
 - 右侧未选择任何文件时，**Discard** 可丢弃仓库内全部未暂存改动，包括被筛选或折叠目录隐藏的文件；选中 **Unstaged Files** 中的文件后仅丢弃所选项，也可右键 **Discard selected files...**。仅选中已暂存文件时 Discard 不可用。确认窗口列出完整选择，执行前检查所有文件状态；丢弃未暂存改动并保留已暂存内容，未跟踪文件会永久删除。冲突文件、目录和子模块需在对应编辑器或仓库中处理。
 - 输入 **Commit summary** 和可选描述后，点击 **Commit changes**。有未解决冲突或暂存区为空时不能提交。未发送的草稿在标签页名称中用 `*` 标记；关闭此标签前会确认，Git 操作执行期间不关闭标签。
 - 中间显示分叉、合并和多父提交关系。点击提交后，右侧显示提交信息及 **Changed Files** 列表，也支持 Path / Tree 和筛选；点击其中一个文件只查看该文件的 Diff，包含重命名和删除文件。
+- 在未暂存、已暂存或提交／Stash 文件列表中右键选择 **View file history**：左侧列出相关提交，右侧查看所选版本的文件 Diff，显示作者、本地时间和 SHA。支持跟随重命名、删除文件历史、每次加载 100 条、**Load more** 和 **Copy patch**。工作区文件从 HEAD 查询（已暂存的重命名使用原路径），提交／Stash 文件从所选版本查询；尚未提交的文件显示空历史，浏览时保留原预览和提交草稿。
 - 工作区和提交文件的 Diff 都在中间展开，显示旧/新行号及增删背景。点击 **< Commit graph** 返回提交图；暂存/取消暂存当前文件后，预览会随其新状态更新。
 - 提交历史每次加载 300 条，底部按钮继续加载。搜索只匹配已加载提交；搜索时隐藏关系线，以免省略中间提交后产生错误连线。
 - 点击左侧 Local / Remote 分支，自动返回提交图、清除提交搜索并滚动到该分支的最新提交；超出已加载历史时自动补充加载。右侧同步显示该提交的文件。
 - 顶部分支下拉框或分支右键菜单切换分支。支持新建分支、标签，以及通过顶部 Fetch 按钮手动更新远端引用、仅快进 Pull、普通 Push。没有 upstream 的本地分支首次 Push 时自动发布到 `origin` 的同名分支并设置跟踪关系；已有 upstream 时沿用原推送配置。
 - 切换仓库标签时自动刷新本地状态和提交图，仓库忙碌时等待当前任务完成；保留提交／Stash 预览、文件选择和提交草稿，并更新打开的工作区文件 Diff。此操作只读取本地 Git 数据，不执行 Fetch。
 - 左侧顶部搜索框统一按名称过滤 Workspace、Local、Remote、Tags 和 Stash，英文忽略大小写。每个仓库在当前会话中独立保留过滤内容，清空后恢复显示；区域标题和操作按钮始终保留。
+- 左侧、右侧文件列表及 Working changes 逐行右键菜单统一使用正文字体和间距，适配深浅主题。
 - 左侧 **Local / Remote / Tags / Stash** 的折叠标题始终可见，列表在各自区域内独立滚动。上下拖动区域间的分隔线可调整展开区域高度，收起后让出空间；高度比例和折叠状态在各仓库标签内独立保留，仅限当前会话。
 - 提交右键菜单或右侧 **Actions** 提供 **Cherry-pick、Merge、Revert、Reset**；分支右键也可合并到当前分支。对合并提交执行 Cherry-pick / Revert 时可选择主线父提交。
 - **Reset** 支持 Soft（保留暂存区与工作文件）、Mixed（重置暂存区，保留工作文件）、Hard（覆盖暂存区与工作文件）；执行前确认，Hard 还需勾选丢弃本地改动。Hard 也可能删除阻碍恢复路径的未跟踪文件。
@@ -146,6 +148,8 @@ ImGui 固定为 `v1.92.5`，GLFW 固定为 `3.4`，首次配置时由 CMake 下�
 
 ![丢弃区块确认](docs/discard-hunk.png)
 
+![文件历史](docs/file-history.png)
+
 ![冲突编辑器](docs/conflict-editor.png)
 
 ## 验证
@@ -154,7 +158,7 @@ ImGui 固定为 `v1.92.5`，GLFW 固定为 `3.4`，首次配置时由 CMake 下�
 ctest --test-dir build --output-on-failure
 ```
 
-测试只在 `/tmp` 创建临时仓库。`git_workflow` 验证空仓库、中文/空格/换行路径、字面量参数、部分暂存、提交、重命名、合并图、多父提交布局、分页、Detached HEAD、Stash、本地远程推拉，以及根提交/合并提交/删除/二进制文件的文件列表和单文件 Diff。
+测试只在 `/tmp` 创建临时仓库。`git_workflow` 验证空仓库、中文/空格/换行路径、字面量参数、部分暂存、提交、重命名、合并图、多父提交布局、分页、Detached HEAD、Stash、本地远程推拉，以及根提交/合并提交/删除/二进制文件的文件列表和单文件 Diff，以及文件历史的重命名跟随、删除／根提交、特殊路径、数量限制和合并历史。
 
 `git_operations` 验证 Cherry-pick / Merge / Revert、合并提交主线选择、三种 Reset、Stash 只读预览与未跟踪文件、恢复暂存状态、过期删除保护，以及真实冲突的继续、中止和跳过、外部 Rebase 中止、独立 Worktree 的操作状态，以及 Discard 对部分暂存、删除、重命名、特殊路径、符号链接和过期状态的处理，以及批量 Discard 的整组选中文件检查和暂存内容保留。
 
@@ -162,7 +166,7 @@ ctest --test-dir build --output-on-failure
 
 `settings_and_ai` 使用本地回环 HTTP 模拟服务验证 OpenAI / Anthropic 两种 JSON 请求、对应认证头和响应解析、仅暂存区内容、中文响应、HTTP/格式错误、取消请求、暂存区变化保护，以及配置覆盖保存、各服务商配置切换与重启恢复、旧配置迁移、自定义模型增删与预设删除保护、窗口尺寸读写与非法值校验、0600 权限与损坏配置处理；不调用付费模型。运行此测试需要允许本机监听端口。
 
-`repository_tabs` 使用真实 ImGui 状态（无需 X 服务）验证侧栏标题固定、长列表独立滚动、区域分隔线拖动及折叠展开、侧栏各区域统一过滤与英文大小写／中文匹配、清空恢复和仓库间隔离、标签点击、独立草稿与文件选择、切换期间的后台 Diff/暂存、相同根目录去重、关闭保护、文件树及 Diff 行号，以及 Stash / Discard 的仓库隔离、分支跨分页定位和提交图滚动、Ctrl / Shift / Ctrl+Shift 多选、连续点击的 Diff 更新、Tree 可见范围、筛选及批量暂存/取消暂存/丢弃、未选中文件时行内按钮的按下／保持／释放、无选区 Stage All／Unstage All、1080×720 下顶部 Stash 点击及摘要命名、暂存／未暂存／未跟踪内容保存、成功清空摘要与失败保留、Stash 按基准提交分组与分页加载、提交图 Stash 搜索及点击预览、主题/模型配置与仓库重启恢复、自定义模型增删的保存与取消、区块取消暂存、替换行 Ctrl／Shift 联动选择及完整丢弃范围的确认／取消、外部编辑／原子保存／删除恢复后的 Diff 自动刷新、关闭预览及已暂存预览隔离、AI 失败保留草稿、本地时间的跨时区与夏令时转换、冲突逐行选择／组合顺序／撤销和输出大小保护、切换仓库自动刷新及忙碌任务结束后补刷新。
+`repository_tabs` 使用真实 ImGui 状态（无需 X 服务）验证侧栏标题固定、长列表独立滚动、区域分隔线拖动及折叠展开、侧栏各区域统一过滤与英文大小写／中文匹配、清空恢复和仓库间隔离、标签点击、独立草稿与文件选择、切换期间的后台 Diff/暂存、相同根目录去重、关闭保护、文件树及 Diff 行号，以及 Stash / Discard 的仓库隔离、分支跨分页定位和提交图滚动、Ctrl / Shift / Ctrl+Shift 多选、连续点击的 Diff 更新、Tree 可见范围、筛选及批量暂存/取消暂存/丢弃、未选中文件时行内按钮的按下／保持／释放、无选区 Stage All／Unstage All、1080×720 下顶部 Stash 点击及摘要命名、暂存／未暂存／未跟踪内容保存、成功清空摘要与失败保留、Stash 按基准提交分组与分页加载、提交图 Stash 搜索及点击预览、主题/模型配置与仓库重启恢复、自定义模型增删的保存与取消、区块取消暂存、替换行 Ctrl／Shift 联动选择及完整丢弃范围的确认／取消、外部编辑／原子保存／删除恢复后的 Diff 自动刷新、关闭预览及已暂存预览隔离、AI 失败保留草稿、本地时间的跨时区与夏令时转换、冲突逐行选择／组合顺序／撤销和输出大小保护、切换仓库自动刷新及忙碌任务结束后补刷新、文件历史加载／版本切换／空历史和原预览保留。
 
 无需图形依赖也可单独测试 Git 后端：
 

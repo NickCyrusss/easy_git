@@ -48,6 +48,17 @@ bool button(const char* text, bool enabled = true, ImVec2 size = {}) {
     ImGui::EndDisabled();
     return clicked;
 }
+// Context menus must not inherit compact file-list spacing or the diff font.
+void end_context_menu() {
+    ImGui::EndPopup(); ImGui::PopStyleVar(2); ImGui::PopFont();
+}
+bool begin_context_menu(const char* id = nullptr) {
+    ImGui::PushFont(body_font,16);
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,{10,8});
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,{10,7});
+    if (ImGui::BeginPopupContextItem(id)) return true;
+    ImGui::PopStyleVar(2); ImGui::PopFont(); return false;
+}
 void section(const char* text) {
     ImGui::Spacing(); ImGui::Spacing();
     label(text); ImGui::Spacing();
@@ -128,6 +139,9 @@ void theme(bool light = false) {
 
 struct JobResult {
     bool external_diff = false, preserve_view = false;
+    bool history_loaded = false, history_patch = false;
+    std::vector<eg::FileRevision> revisions;
+    std::string history_base;
     eg::Snapshot snapshot;
     bool ai_generated = false;
     eg::CommitMessage generated;
@@ -153,6 +167,11 @@ struct RepoTab {
     const eg::AiSettings* ai_settings = nullptr;
     std::string opened_path;
     bool generating = false;
+    bool history_open = false, history_more = false;
+    std::string history_path, history_base, history_patch, history_error;
+    std::vector<eg::FileRevision> file_revisions;
+    std::vector<std::string> history_patch_lines;
+    int history_limit = 100, history_selected = -1;
     std::set<int> selected_lines;
     int line_anchor = -1, open_mode = 0, conflict_number = 0;
     char clone_url[4096] = {}, initial_branch[256] = "main";
@@ -447,6 +466,18 @@ struct RepoTab {
         if (!busy() || job.wait_for(std::chrono::seconds(0)) != std::future_status::ready) return;
         try {
             auto r = job.get(); previewing = false; generating = false;
+            if (r.history_loaded || r.history_patch) {
+                if (r.history_loaded) {
+                    history_more = int(r.revisions.size()) > history_limit;
+                    if (history_more) r.revisions.resize(history_limit);
+                    file_revisions = std::move(r.revisions); history_base = r.history_base;
+                    if (history_selected < 0 && !file_revisions.empty()) history_selected = 0;
+                }
+                history_patch = std::move(r.detail); history_error = std::move(r.error); status = r.message;
+                history_patch_lines.clear(); std::istringstream lines(history_patch);
+                for (std::string line;std::getline(lines,line);) history_patch_lines.push_back(std::move(line));
+                return;
+            }
             if (!r.created_path.empty()) { requested_open = r.created_path; status = r.message; return; }
             if (r.push_selection) { pending_push = std::move(r.push); pending_kind = "force push"; hard_confirm = false; return; }
             if (r.conflict_selection) {
@@ -651,9 +682,9 @@ struct RepoTab {
         ImGui::SameLine(); if (button("Fetch", ready(), {70,36})) command("Fetch", {"fetch", "--all"});
         ImGui::SameLine(); if (button("Pull", idle(), {64,36})) command("Pull", {"pull", "--ff-only"});
         ImGui::SameLine(); if (button("Push", ready(), {64,36})) mutate("Push", [](const eg::Git& git) { git.push(); });
-        if (ImGui::BeginPopupContextItem("push_menu")) {
+        if (begin_context_menu("push_menu")) {
             if (ImGui::MenuItem("Force push with lease...",nullptr,false,ready() && repo.has_head)) prepare_force_push();
-            ImGui::EndPopup();
+            end_context_menu();
         }
         ImGui::SameLine();
         if (button("Stash",idle() && repo.has_head && !repo.files.empty(),{64,36})) {
@@ -687,7 +718,7 @@ struct RepoTab {
                 ImGui::GetColorU32(selected ? mint : ImGui::GetStyleColorVec4(ImGuiCol_Text)),
                 {pos.x+ImGui::GetContentRegionAvail().x,pos.y+26});
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", ref.name.c_str());
-            if (ImGui::BeginPopupContextItem()) {
+            if (begin_context_menu()) {
                 if (prefix == "refs/heads/" && ImGui::MenuItem("Switch to branch", nullptr, false, idle()))
                     command("Switch branch", {"switch", "--", ref.name});
                 if (ImGui::MenuItem("Merge into current branch...",nullptr,false,idle() && repo.has_head)) {
@@ -700,7 +731,7 @@ struct RepoTab {
                 }
                 if (current && ImGui::MenuItem("Force push with lease...",nullptr,false,ready())) prepare_force_push();
                 if (ImGui::MenuItem("Copy reference")) ImGui::SetClipboardText(ref.full.c_str());
-                ImGui::EndPopup();
+                end_context_menu();
             }
             ImGui::PopID();
         }
@@ -784,9 +815,9 @@ struct RepoTab {
             text_clipped(ImGui::GetWindowDrawList(),{pos.x+5,pos.y+4},stash.subject,
                 ImGui::GetColorU32(ImGuiCol_Text),{pos.x+ImGui::GetContentRegionAvail().x,pos.y+26});
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s\nClick to preview",stash.subject.c_str());
-            if (ImGui::BeginPopupContextItem()) {
+            if (begin_context_menu()) {
                 stash_actions(stash);
-                ImGui::EndPopup();
+                end_context_menu();
             }
             ImGui::PopID();
         }
@@ -879,14 +910,14 @@ struct RepoTab {
                     ImGui::SetScrollHereY(0.5f); ImGui::SetScrollX(0); scroll_to_commit.clear();
                 }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s\n%s\n%s\n%s", c.subject.c_str(), stash ? "Stash" : c.refs.c_str(), c.id.c_str(),local_commit_time(c.date).c_str());
-                if (ImGui::BeginPopupContextItem()) {
+                if (begin_context_menu()) {
                     if (stash) stash_actions(*stash);
                     else {
                         if (ImGui::MenuItem("Copy commit SHA")) ImGui::SetClipboardText(c.id.c_str());
                         if (ImGui::MenuItem("View commit", nullptr, false, !busy())) select_commit(c);
                         ImGui::Separator(); commit_actions(c);
                     }
-                    ImGui::EndPopup();
+                    end_context_menu();
                 }
                 auto* draw = ImGui::GetWindowDrawList();
                 float offset = 0;
@@ -1168,11 +1199,11 @@ struct RepoTab {
                 } else if (partial_available() && changed_line(i)) {
                     if (ImGui::InvisibleButton("line",{width,h})) pick_line(i,ImGui::GetIO().KeyCtrl,ImGui::GetIO().KeyShift);
                     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Click / Ctrl / Shift to select changed lines");
-                    if (ImGui::BeginPopupContextItem()) {
+                    if (begin_context_menu()) {
                         if (!selected_lines.count(i)) pick_line(i,false,false);
                         if (ImGui::MenuItem(selected_staged ? "Unstage selected lines" : "Stage selected lines")) stage_diff_lines({selected_lines.begin(),selected_lines.end()});
                         if (!selected_staged && ImGui::MenuItem("Discard selected lines...")) request_discard_lines({selected_lines.begin(),selected_lines.end()});
-                        ImGui::EndPopup();
+                        end_context_menu();
                     }
                 } else ImGui::Dummy({width,h});
                 ImGui::PopID();
@@ -1201,6 +1232,93 @@ struct RepoTab {
         ImGui::Separator();
         diff_view();
     }
+    void load_file_history() {
+        auto root = repo.root, name = history_path, base = history_base; auto stop = cancel;
+        int count = history_limit, selected = history_selected;
+        launch("Loading file history...",[root,name,base,stop,count,selected] {
+            JobResult r; r.history_loaded = true; r.history_base = base;
+            try {
+                eg::Git git(root,stop);
+                if (!base.empty()) {
+                    r.history_base = git.read_commit(base).id;
+                    r.revisions = git.file_history(name,r.history_base,count+1);
+                    if (!r.revisions.empty()) {
+                        auto& revision = r.revisions[std::clamp(selected,0,int(r.revisions.size())-1)];
+                        r.detail = git.commit_diff(revision.commit,revision.file);
+                    }
+                }
+            } catch (const std::exception& e) { r.error = e.what(); }
+            r.message = r.error.empty() ? "File history loaded" : "Could not load file history"; return r;
+        });
+    }
+    void open_file_history(const eg::File& file,int kind) {
+        if (!ready()) return;
+        history_path = kind != 2 && file.index == 'R' && !file.original.empty() ? file.original : file.path;
+        history_base = kind == 2 ? (stash_view ? viewed_stash.id : viewed_commit.id) : (repo.has_head ? "HEAD" : "");
+        history_open = true; history_more = false; history_limit = 100; history_selected = -1;
+        file_revisions.clear(); history_patch_lines.clear(); history_patch.clear(); history_error.clear(); load_file_history();
+    }
+    void select_file_revision(int index) {
+        if (!ready() || index < 0 || index >= int(file_revisions.size())) return;
+        history_selected = index; history_patch_lines.clear(); history_patch.clear(); history_error.clear();
+        auto revision = file_revisions[index]; auto root = repo.root; auto stop = cancel;
+        launch("Loading historical diff...",[root,stop,revision] {
+            JobResult r; r.history_patch = true;
+            try { r.detail = eg::Git(root,stop).commit_diff(revision.commit,revision.file); }
+            catch (const std::exception& e) { r.error = e.what(); }
+            r.message = "File history"; return r;
+        });
+    }
+    void file_history_dialog() {
+        if (history_open && !ImGui::IsPopupOpen("File history")) ImGui::OpenPopup("File history");
+        auto size = ImGui::GetMainViewport()->WorkSize;
+        ImGui::SetNextWindowSize({std::min(1280.0f,size.x-40),std::min(820.0f,size.y-50)},ImGuiCond_Appearing);
+        if (!ImGui::BeginPopupModal("File history",nullptr)) return;
+        ImGui::TextWrapped("%s",visible_path(history_path).c_str());
+        ImGui::TextColored(muted,"%zu commits | follows renames | %s",file_revisions.size(),history_base.empty() ? "No commits yet" : history_base.substr(0,12).c_str());
+        if (button("Close")) { history_open = false; ImGui::CloseCurrentPopup(); }
+        ImGui::SameLine();
+        if (button("Load more",!busy() && history_more)) { history_limit += 100; load_file_history(); }
+        ImGui::SameLine(); if (button("Copy patch",!busy() && !history_patch.empty())) ImGui::SetClipboardText(history_patch.c_str());
+        if (!history_error.empty()) ImGui::TextWrapped("%s",history_error.c_str());
+        ImGui::Separator();
+        if (ImGui::BeginTable("file_history_columns",2,ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersInnerV)) {
+            ImGui::TableSetupColumn("Commits",ImGuiTableColumnFlags_WidthFixed,300);
+            ImGui::TableSetupColumn("Diff",ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableNextColumn(); ImGui::BeginChild("revisions",{0,0});
+            if (file_revisions.empty()) label(busy() ? "Loading history..." : "No committed history for this file.");
+            ImGuiListClipper clipper; clipper.Begin(int(file_revisions.size()),62+ImGui::GetStyle().ItemSpacing.y);
+            while (clipper.Step()) for (int i=clipper.DisplayStart;i<clipper.DisplayEnd;++i) {
+                auto& c = file_revisions[i].commit;
+                ImGui::PushID(i); auto pos = ImGui::GetCursorScreenPos();
+                if (ImGui::Selectable("##revision",history_selected==i,0,{0,62})) select_file_revision(i);
+                auto* draw=ImGui::GetWindowDrawList(); float width=ImGui::GetContentRegionAvail().x;
+                text_clipped(draw,{pos.x+6,pos.y+5},c.subject,ImGui::GetColorU32(ImGuiCol_Text),{pos.x+width,pos.y+24});
+                text_clipped(draw,{pos.x+6,pos.y+26},c.author+"  "+local_commit_time(c.date).substr(0,16),ImGui::GetColorU32(muted),{pos.x+width,pos.y+44});
+                draw->AddText({pos.x+6,pos.y+44},ImGui::GetColorU32(mint),c.id.substr(0,10).c_str());
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s\n%s\n%s",c.subject.c_str(),c.id.c_str(),local_commit_time(c.date).c_str());
+                ImGui::PopID();
+            }
+            ImGui::EndChild(); ImGui::TableNextColumn();
+            ImGui::BeginChild("historical_diff",{0,0},0,ImGuiWindowFlags_HorizontalScrollbar);
+            if (history_selected >= 0 && history_selected < int(file_revisions.size())) {
+                ImGui::TextWrapped("%s",visible_path(file_revisions[history_selected].file.path).c_str()); ImGui::Separator();
+            }
+            if (history_patch.empty()) label(busy() ? "Loading diff..." : "No textual changes.");
+            ImGui::PushFont(mono_font,14); ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,{0,0});
+            ImGuiListClipper patch_clipper; patch_clipper.Begin(int(history_patch_lines.size()),ImGui::GetTextLineHeight());
+            while (patch_clipper.Step()) for (int i=patch_clipper.DisplayStart;i<patch_clipper.DisplayEnd;++i) {
+                const auto& line=history_patch_lines[i];
+                ImVec4 color=ImGui::GetStyleColorVec4(ImGuiCol_Text);
+                if (!line.empty() && line[0]=='+') color=mint;
+                else if (!line.empty() && line[0]=='-') color=red;
+                else if (line.rfind("@@",0)==0) color=muted;
+                ImGui::TextColored(color,"%s",line.c_str());
+            }
+            ImGui::PopStyleVar(); ImGui::PopFont(); ImGui::EndChild(); ImGui::EndTable();
+        }
+        ImGui::EndPopup();
+    }
     void change_file(const eg::File& file, bool staged) {
         change_files({file},staged);
     }
@@ -1223,9 +1341,10 @@ struct RepoTab {
             auto tip = f.original.empty() ? visible_path(f.path) : visible_path(f.original) + " -> " + visible_path(f.path);
             ImGui::SetTooltip("%s",tip.c_str());
         }
-        if (ImGui::BeginPopupContextItem()) {
+        if (begin_context_menu()) {
             auto chosen = chosen_files(kind);
             if (ImGui::MenuItem("View diff",nullptr,false,!busy())) select_file(f,staged);
+            if (ImGui::MenuItem("View file history",nullptr,false,ready())) open_file_history(f,kind);
             if (kind != 2 && ImGui::MenuItem(staged ? "Unstage selected files" : "Stage selected files",nullptr,false,ready() && !chosen.empty()))
                 change_files(chosen,staged);
             bool discardable = !chosen.empty() && std::none_of(chosen.begin(),chosen.end(),[](const auto& file) { return file.conflicted(); });
@@ -1235,7 +1354,7 @@ struct RepoTab {
                 for (const auto& file : chosen) { if (!paths.empty()) paths += '\n'; paths += file.path; }
                 ImGui::SetClipboardText(paths.c_str());
             }
-            ImGui::EndPopup();
+            end_context_menu();
         }
         char status = kind == 0 ? f.worktree : f.index;
         ImU32 color = (status == 'D' || f.conflicted()) ? ImGui::GetColorU32(red) :
@@ -1575,6 +1694,7 @@ struct RepoTab {
             ImGui::SameLine(); if (button("Cancel")) { new_kind.clear(); ImGui::CloseCurrentPopup(); }
             ImGui::EndPopup();
         }
+        file_history_dialog();
         conflict_dialog();
         operation_dialog();
         if (!error.empty() && !ImGui::IsPopupOpen("Git operation failed")) ImGui::OpenPopup("Git operation failed");

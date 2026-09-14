@@ -17,16 +17,17 @@ Easy Git takes inspiration from GitKraken's three-panel interface. It is an inde
 - **Stash:** save tracked and untracked changes; click to preview, then use the context menu to apply or delete. Conflict operations expose Continue, Abort, and Skip where supported.
 - **Refresh on repository switch:** selecting a repository tab refreshes its local status and commit graph. Busy tasks finish first; commit/stash previews, file selection, and commit drafts are preserved, and open working-file diffs are updated. This reads local Git data without fetching from remotes.
 - **Sidebar search:** the filter above Workspace matches entries across Workspace, Local, Remote, Tags, and Stash by name (case-insensitive for English). Each repository keeps its own filter during the session; clearing it restores all entries. Section headers and action buttons remain available.
+- **Context menus:** sidebar, file-list, and Working changes line menus share the same body font and spacing in both themes.
 - **Appearance:** light and dark themes, automatic window-size restoration, and resizable panels. Local, Remote, Tags, and Stash keep their collapse headers visible while their lists scroll independently. Drag the horizontal separators to resize expanded sections; collapsed sections release their space. Heights and collapse states are independent per repository for the current session.
 - **Optional AI:** generate an editable commit draft from staged changes using OpenAI or Anthropic compatible APIs, with 36 searchable provider/platform presets and independent, named model configurations.
 
 ## Debian package
 
-Download the [v0.1.2 amd64 `.deb`](https://github.com/NickCyrusss/easy_git/releases/download/v0.1.2/easy-git_0.1.2_amd64.deb) and [SHA256SUMS](https://github.com/NickCyrusss/easy_git/releases/download/v0.1.2/SHA256SUMS) from [GitHub Releases](https://github.com/NickCyrusss/easy_git/releases/tag/v0.1.2). Packages are built and tested on Ubuntu 22.04 (x86-64).
+Download the [v0.1.3 amd64 `.deb`](https://github.com/NickCyrusss/easy_git/releases/download/v0.1.3/easy-git_0.1.3_amd64.deb) and [SHA256SUMS](https://github.com/NickCyrusss/easy_git/releases/download/v0.1.3/SHA256SUMS) from [GitHub Releases](https://github.com/NickCyrusss/easy_git/releases/tag/v0.1.3). Packages are built and tested on Ubuntu 22.04 (x86-64).
 
 ```sh
 sha256sum -c SHA256SUMS
-sudo apt install ./easy-git_0.1.2_amd64.deb
+sudo apt install ./easy-git_0.1.3_amd64.deb
 ```
 
 The package includes the application-menu launcher and icon. Launch **Easy Git** or run `easy_git`; remove with `sudo apt remove easy-git`. User configuration in `~/.easy_git` is retained.
@@ -40,7 +41,7 @@ ctest --test-dir build-deb --output-on-failure
 (cd build-deb && cpack -G DEB)
 ```
 
-The `.deb` is written to `build-deb/`. Pushing a version tag matching the CMake version (for example `v0.1.2`) runs the Debian release workflow: build, test, install-check, and upload the package and checksum to GitHub Releases.
+The `.deb` is written to `build-deb/`. Pushing a version tag matching the CMake version (for example `v0.1.3`) runs the Debian release workflow: build, test, install-check, and upload the package and checksum to GitHub Releases.
 
 ## Build and run
 
@@ -88,6 +89,10 @@ No proxy is required by default. If your network needs one for dependency downlo
 3. Enter a summary and optional description, then click **Commit changes**. Commits require staged changes and no unresolved conflicts. Configure your Git author identity before your first commit.
 4. Select a commit to browse **Changed Files**, or right-click a commit/branch for Git operations. Clicking a sidebar branch navigates to its tip; checkout is a separate action in the branch selector or context menu.
 5. Press **F5** to refresh after external changes. Git work runs asynchronously, and failures display the command error.
+
+Right-click a file in **Unstaged**, **Staged**, or a commit/stash file list and select **View file history**. The history window shows commits on the left and the selected revision’s file diff on the right, with author, local time, and SHA. It follows renames, supports deleted files, loads 100 entries at a time, and provides **Load more** and **Copy patch**. Working files start from HEAD (staged renames use their original path); committed/stashed files start from the selected revision. New files without commits show an empty history. Browsing history preserves your workspace preview and commit draft.
+
+![File history](docs/file-history.png)
 
 Hover a file row and click **Stage File** or **Unstage** directly; selecting the file first is optional. The button stays available while you hold the mouse button and executes on release. Row buttons affect only that file. With no files selected, the group’s **Stage All Changes** / **Unstage All Changes** button applies to the entire group; with a selection, it applies to the selected files.
 
@@ -162,11 +167,11 @@ Tests create disposable repositories under `/tmp`:
 
 | Test | Coverage |
 | --- | --- |
-| `git_workflow` | Status, unusual paths, staging, commits, commit graphs, pagination, file diffs, stash, and local remote operations |
+| `git_workflow` | Status, unusual paths, staging, commits, commit graphs, pagination, file diffs, rename-following file history with deleted/root revisions, literal paths, limits and merge coverage, stash, and local remote operations |
 | `git_operations` | Cherry-pick, merge, revert, reset modes, stash handling, conflict continuation/abort/skip, and discard protections |
 | `git_workflows` | Partial staging/unstaging/discard, linked replacement lines and preserved line order, selection isolation and stale-preview rejection, conflict resolution and leftover diff3 marker rejection, clone/init, local/remote branch deletion, first-push publication and upstream setup, existing-upstream handling, non-fast-forward/detached-HEAD/missing-origin rejection, and force-push lease rejection |
 | `settings_and_ai` | Configuration replacement and permissions, window-size round trips and validation, per-model settings and migration, custom model add/delete protection, OpenAI/Anthropic HTTP requests and responses, cancellation, and stale-index protection |
-| `repository_tabs` | Headless ImGui interactions, fixed sidebar headers with independent scrolling and draggable section separators, sidebar filtering across all sections with case-insensitive English and Chinese substring matching, clearing and per-tab isolation, independent tabs and drafts, branch navigation, file selections, unselected row actions with mouse press/hold/release, Stage All/Unstage All without selection, toolbar Stash naming and saved content at 1080×720, summary clearing on success and retention on failure, stash grouping by base commit, paginated base loading, graph stash search and preview, batch operations, settings Save/Cancel including model add/delete, partial unstage, linked line selection with Ctrl/Shift and complete discard confirmation/cancellation, external diff refresh after edits/atomic saves/deletion/restoration, staged-preview isolation, local timestamps across timezones and daylight saving, conflict line selection/order/undo and output-size protection, repository-switch refresh with busy-task deferral, and restart recovery |
+| `repository_tabs` | Headless ImGui interactions, fixed sidebar headers with independent scrolling and draggable section separators, sidebar filtering across all sections with case-insensitive English and Chinese substring matching, clearing and per-tab isolation, independent tabs and drafts, branch navigation, file selections, unselected row actions with mouse press/hold/release, Stage All/Unstage All without selection, toolbar Stash naming and saved content at 1080×720, summary clearing on success and retention on failure, stash grouping by base commit, paginated base loading, graph stash search and preview, batch operations, settings Save/Cancel including model add/delete, partial unstage, linked line selection with Ctrl/Shift and complete discard confirmation/cancellation, external diff refresh after edits/atomic saves/deletion/restoration, staged-preview isolation, local timestamps across timezones and daylight saving, conflict line selection/order/undo and output-size protection, repository-switch refresh with busy-task deferral, file-history loading/revision selection/empty states and preview isolation, and restart recovery |
 
 AI tests use a local loopback HTTP server and require permission to listen on a local port. They do not call paid providers. Actual provider calls require your own API key and have not been validated by these tests.
 
