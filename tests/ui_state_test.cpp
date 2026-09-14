@@ -14,11 +14,12 @@ void frame(App& app) {
 }
 void settle(App& app) {
     auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
-    do {
+    int idle_frames = 0;
+    while (idle_frames < 3) {
         frame(app); std::this_thread::sleep_for(std::chrono::milliseconds(5));
         require(std::chrono::steady_clock::now() < deadline,"Background work did not finish");
-    } while (app.busy());
-    frame(app); frame(app);
+        idle_frames = app.busy() ? 0 : idle_frames+1;
+    }
     for (const auto& tab : app.tabs) require(tab->error.empty(),tab->error.c_str());
 }
 
@@ -70,10 +71,17 @@ int main() {
         app.config_path = (base / ".easy_git").string();
         require(app.tabs.size() == 2,"Opening the second repository replaced the first");
         auto* a = app.tabs[0].get(); auto* b = app.tabs[1].get(); int a_id = a->id, b_id = b->id;
+        eg::Git(root_a.string()).checked({"branch","external-refresh-test"});
+        std::ofstream(root_a/"external-refresh.txt") << "external change\n";
         io.AddMousePosEvent(30,18); frame(app);
         io.AddMouseButtonEvent(0,true); frame(app);
         io.AddMouseButtonEvent(0,false); frame(app); frame(app);
         require(app.active == a_id,"Clicking the first repository tab did not activate it");
+        settle(app);
+        require(std::any_of(a->repo.refs.begin(),a->repo.refs.end(),[](const auto& ref) { return ref.name=="external-refresh-test"; }) &&
+                std::any_of(a->repo.files.begin(),a->repo.files.end(),[](const auto& f) { return f.path=="external-refresh.txt"; }),"Switching repository did not refresh external branches and files");
+        fs::remove(root_a/"external-refresh.txt"); eg::Git(root_a.string()).checked({"branch","-d","external-refresh-test"});
+        a->load(root_a.string()); settle(app);
         auto real_refs = a->repo.refs;
         for (int i=0;i<100;++i) a->repo.refs.push_back({"refs/heads/extra"+std::to_string(i),"extra"+std::to_string(i),"unused"});
         io.DisplaySize = {1080,720}; frame(app); frame(app);
@@ -168,7 +176,7 @@ int main() {
         a->load(root_a.string()); settle(app); app.active = app.focus = a_id;
         auto before_stash_index = git_a.checked({"write-tree"});
         auto before_stash_b = git_b.checked({"status","--porcelain=v1","-z"});
-        io.DisplaySize = {1080,720}; frame(app); frame(app);
+        io.DisplaySize = {1080,720}; settle(app);
         ImGuiWindow* toolbar = nullptr;
         for (auto* window : GImGui->Windows)
             if (window->Active && std::string(window->Name).find("/toolbar_") != std::string::npos) toolbar=window;
@@ -195,7 +203,7 @@ int main() {
                 !saved.author.empty() && !saved.date.empty(),"Stash graph entry was not next to its base commit");
         snprintf(a->search,sizeof(a->search),"stash@{0}"); a->filter();
         require(a->matches==std::vector<int>{1},"Graph search omitted stash entry");
-        app.active = app.focus = a_id; frame(app); frame(app);
+        app.active = app.focus = a_id; settle(app);
         ImGuiTable* stash_table = nullptr;
         for (auto* window : GImGui->Windows)
             if (window->Active && window->ParentWindow && std::string(window->ParentWindow->Name)=="Easy Git" &&
@@ -549,6 +557,21 @@ int main() {
         restored.tabs[0]->generate_message();
         while (restored.busy()) { frame(restored); std::this_thread::sleep_for(std::chrono::milliseconds(5)); }
         require(std::string(restored.tabs[0]->message) == "Keep existing draft" && !restored.tabs[0]->error.empty(),"Failed AI request overwrote draft");
+        {
+            App switching;
+            switching.open_repository(root_a.string()); switching.open_repository(root_b.string()); settle(switching);
+            auto& first = *switching.tabs[0];
+            std::promise<JobResult> blocked;
+            first.job = blocked.get_future();
+            std::ofstream(root_a/"switch-refresh.txt") << "pending refresh\n";
+            switching.active = switching.focus = first.id; frame(switching); frame(switching); frame(switching);
+            require(switching.pending_refresh==first.id,"Switch during a busy task lost its pending refresh");
+            blocked.set_value(JobResult{}); settle(switching);
+            require(!switching.pending_refresh && std::any_of(first.repo.files.begin(),first.repo.files.end(),[](const auto& f) { return f.path=="switch-refresh.txt"; }),"Deferred switch refresh did not run");
+            switching.refresh_switched_repository();
+            require(!switching.busy(),"Refresh repeated without switching repositories");
+            switching.shutdown();
+        }
         restored.shutdown(); ImGui::DestroyContext(); fs::remove_all(base); return 0;
     } catch (const std::exception& e) {
         std::cerr << "FAIL: " << e.what() << '\n';

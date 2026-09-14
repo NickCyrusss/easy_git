@@ -127,7 +127,7 @@ void theme(bool light = false) {
 }
 
 struct JobResult {
-    bool external_diff = false;
+    bool external_diff = false, preserve_view = false;
     eg::Snapshot snapshot;
     bool ai_generated = false;
     eg::CommitMessage generated;
@@ -366,12 +366,19 @@ struct RepoTab {
         *cancel = false; error.clear(); status = std::move(activity);
         job = std::async(std::launch::async, std::move(action));
     }
-    void load(const std::string& root) {
+    void load(const std::string& root, bool preserve_view = false) {
         opened_path = root;
         auto stop = cancel;
         int count = limit;
-        launch("Reading repository...", [root, count, stop] {
-            JobResult r; r.snapshot = eg::Git(root, stop).load(count); r.reload = true;
+        auto preview = preserve_view && workspace && show_diff ? selected_file : std::string();
+        bool staged = selected_staged;
+        launch("Reading repository...", [root, count, stop, preserve_view, preview, staged] {
+            eg::Git git(root, stop);
+            JobResult r; r.snapshot = git.load(count); r.reload = true; r.preserve_view = preserve_view;
+            r.preview_file = preview; r.preview_staged = staged;
+            auto found = std::find_if(r.snapshot.files.begin(),r.snapshot.files.end(),[&](const auto& f) { return f.path == preview; });
+            if (!preview.empty() && found != r.snapshot.files.end() && !found->conflicted() && (staged ? found->staged() : found->unstaged()))
+                r.detail = git.diff(*found,staged);
             r.message = "Repository up to date"; return r;
         });
     }
@@ -466,6 +473,10 @@ struct RepoTab {
                 repo.files = std::move(r.files); rebuild_file_lists();
                 if (workspace && show_diff && !selected_staged && selected_file == r.preview_file && detail != r.detail)
                     set_detail(std::move(r.detail));
+            } else if (r.reload && r.preserve_view) {
+                repo = std::move(r.snapshot); rebuild_history(); rebuild_file_lists();
+                if (!r.preview_file.empty() && workspace && show_diff && selected_file == r.preview_file &&
+                    selected_staged == r.preview_staged && detail != r.detail) set_detail(std::move(r.detail));
             } else if (r.reload) {
                 bool keep_preview = show_diff;
                 clear_file_selection();
@@ -1792,6 +1803,18 @@ struct App {
         if (tab->message[0] || tab->description[0]) pending_close = id;
         else close_tab(id);
     }
+    int refresh_active = 0, pending_refresh = 0;
+    void refresh_switched_repository(bool allow = true) {
+        if (active != refresh_active) {
+            refresh_active = active;
+            auto* tab = find(active);
+            pending_refresh = tab && !tab->repo.root.empty() ? active : 0;
+        }
+        auto* tab = find(pending_refresh);
+        if (!allow || !tab || !tab->ready() || tab->conflict_open || !tab->pending_kind.empty() || !tab->error.empty()) return;
+        pending_refresh = 0;
+        tab->load(tab->repo.root,true);
+    }
     void frame() {
         for (auto& tab : tabs) tab->poll();
         // Resolve subfolder/symlink aliases only after Git has identified the worktree root.
@@ -1875,6 +1898,7 @@ struct App {
             ImGui::EndPopup();
         }
         settings_dialog();
+        refresh_switched_repository(!ImGui::IsPopupOpen(nullptr,ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel));
         persist();
         ImGui::End();
     }
