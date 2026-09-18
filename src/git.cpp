@@ -215,6 +215,17 @@ std::vector<GraphRow> layout_graph(const std::vector<Commit>& commits) {
     return rows;
 }
 
+std::string Git::change_signature() const {
+    std::string signature;
+    auto append = [&](const std::string& value) { signature += std::to_string(value.size()) + ":" + value; };
+    append(checked({"--no-optional-locks","status","--porcelain=v2","--branch","-z","--untracked-files=all"}));
+    append(checked({"for-each-ref","--format=%(refname)%00%(objectname)"}));
+    append(checked({"diff","--cached","--raw","--no-abbrev","--no-ext-diff","--no-textconv","-z","--"}));
+    append(checked({"stash","list","-z","--format=%gd%x00%H%x00%gs"}));
+    append(operation_in_progress());
+    return signature;
+}
+
 Snapshot Git::load(int limit) const {
     Snapshot s;
     if (trim_line(checked({"rev-parse", "--is-inside-work-tree"})) != "true")
@@ -227,7 +238,7 @@ Snapshot Git::load(int limit) const {
     auto branch = repo.run({"symbolic-ref", "--quiet", "--short", "HEAD"});
     s.branch = branch.code ? "Detached at " + trim_line(repo.checked({"rev-parse", "--short", "HEAD"}))
                            : trim_line(branch.out);
-    s.files = parse_status(repo.checked({"status", "--porcelain=v1", "-z", "--untracked-files=all"}));
+    s.files = parse_status(repo.checked({"--no-optional-locks", "status", "--porcelain=v1", "-z", "--untracked-files=all"}));
     auto refs = repo.checked({"for-each-ref", "--format=%(refname)%00%(refname:short)%00%(objectname)%00%(*objectname)",
         "refs/heads", "refs/remotes", "refs/tags"});
     std::istringstream lines(refs);

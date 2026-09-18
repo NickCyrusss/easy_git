@@ -25,6 +25,8 @@ Easy Git takes inspiration from GitKraken's three-panel interface. It is an inde
 
 ## Debian package
 
+This README describes the current source tree. Silent monitoring, automatic fetch, and applying a historical file diff are newer than the v0.1.3 package; build from source to use them.
+
 Download the [v0.1.3 amd64 `.deb`](https://github.com/NickCyrusss/easy_git/releases/download/v0.1.3/easy-git_0.1.3_amd64.deb) and [SHA256SUMS](https://github.com/NickCyrusss/easy_git/releases/download/v0.1.3/SHA256SUMS) from [GitHub Releases](https://github.com/NickCyrusss/easy_git/releases/tag/v0.1.3). Packages are built and tested on Ubuntu 22.04 (x86-64).
 
 ```sh
@@ -149,7 +151,7 @@ OpenAI format sends Bearer authentication and reads `choices[].message.content`;
 
 Window width and height are saved automatically after resizing and restored on startup (minimum 1080 × 720). Window position, maximized state and panel layouts are not saved.
 
-Window dimensions, open repositories, the active repository, theme, and all AI profiles are saved to **`~/.easy_git`** as JSON and restored on startup. Saves replace the file atomically with **0600** permissions. API keys are stored as plaintext in this owner-only file. Existing single-provider configurations remain supported. The old fixed **Custom** entry migrates to a deletable **Imported model** profile without losing its settings; legacy files retain their original OpenAI request format. A malformed file is preserved and reported until you explicitly save replacement settings.
+Window dimensions, open repositories, the active repository, theme, and all AI profiles are saved to **`~/.easy_git`** as JSON and restored on startup. Saves replace the file atomically with **0600** permissions. Failed saves report an error and are retried automatically; only successful writes count as saved. API keys are stored as plaintext in this owner-only file. Existing single-provider configurations remain supported. The old fixed **Custom** entry migrates to a deletable **Imported model** profile without losing its settings; legacy files retain their original OpenAI request format. A malformed file is preserved and reported until you explicitly save replacement settings.
 
 Use a separate configuration file for testing:
 

@@ -48,6 +48,10 @@ bool button(const char* text, bool enabled = true, ImVec2 size = {}) {
     ImGui::EndDisabled();
     return clicked;
 }
+void same_line_if_fits(float width) {
+    if (ImGui::GetItemRectMax().x + ImGui::GetStyle().ItemSpacing.x + width <=
+        ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x) ImGui::SameLine();
+}
 // Context menus must not inherit compact file-list spacing or the diff font.
 void end_context_menu() {
     ImGui::EndPopup(); ImGui::PopStyleVar(2); ImGui::PopFont();
@@ -138,7 +142,8 @@ void theme(bool light = false) {
 }
 
 struct JobResult {
-    bool external_diff = false, preserve_view = false;
+    bool preserve_view = false;
+    std::string signature;
     bool history_loaded = false, history_patch = false;
     std::vector<eg::FileRevision> revisions;
     std::string history_base;
@@ -207,7 +212,15 @@ struct RepoTab {
     std::vector<eg::GraphRow> graph;
     std::vector<int> matches;
     std::vector<DiffLine> detail_lines;
-    std::future<JobResult> job;
+    std::future<JobResult> job, monitor_job;
+    std::future<void> fetch_job;
+    std::shared_ptr<std::atomic_bool> fetch_cancel = std::make_shared<std::atomic_bool>(false);
+    double next_fetch_at = 0;
+    std::shared_ptr<std::atomic_bool> monitor_cancel = std::make_shared<std::atomic_bool>(false);
+    std::string monitor_signature;
+    double monitor_checked_at = -1;
+    unsigned operation_generation = 0, monitor_generation = 0;
+    ~RepoTab() { *monitor_cancel = true; *fetch_cancel = true; }
     std::shared_ptr<std::atomic_bool> cancel = std::make_shared<std::atomic_bool>(false);
     std::string status = "Open a repository to get started", error, detail, selected_commit, selected_file;
     std::string new_kind, pending_kind, pending_operation;
@@ -223,8 +236,6 @@ struct RepoTab {
     std::array<bool,4> sidebar_open = {true,true,true,true};
     std::array<float,4> sidebar_weights = {1,1,1,1};
     bool workspace = true, selected_staged = false, opening = false;
-    double diff_checked_at = 0;
-    std::string watched_stamp;
     bool busy() const { return job.valid(); }
     bool ready() const { return !repo.root.empty() && !busy(); }
 
@@ -382,6 +393,7 @@ struct RepoTab {
     }
     void launch(std::string activity, std::function<JobResult()> action) {
         if (busy()) return;
+        ++operation_generation;
         *cancel = false; error.clear(); status = std::move(activity);
         job = std::async(std::launch::async, std::move(action));
     }
@@ -500,11 +512,7 @@ struct RepoTab {
                 status = r.message; browse_error = r.error;
                 return;
             }
-            if (r.external_diff) {
-                repo.files = std::move(r.files); rebuild_file_lists();
-                if (workspace && show_diff && !selected_staged && selected_file == r.preview_file && detail != r.detail)
-                    set_detail(std::move(r.detail));
-            } else if (r.reload && r.preserve_view) {
+            if (r.reload && r.preserve_view) {
                 repo = std::move(r.snapshot); rebuild_history(); rebuild_file_lists();
                 if (!r.preview_file.empty() && workspace && show_diff && selected_file == r.preview_file &&
                     selected_staged == r.preview_staged && detail != r.detail) set_detail(std::move(r.detail));
@@ -610,7 +618,6 @@ struct RepoTab {
     void select_file(const eg::File& file, bool staged) {
         if (busy()) return;
         selected_file = file.path; selected_staged = staged; show_diff = true; set_detail("");
-        watched_stamp = file_stamp();
         auto root = repo.root; auto stop = cancel; bool working = workspace; auto commit = viewed_commit;
         bool saved = stash_view; auto stash = viewed_stash;
         launch("Loading diff...", [root, stop, file, staged, working, commit, saved, stash] {
@@ -628,22 +635,56 @@ struct RepoTab {
             std::to_string(info.st_mtim.tv_sec)+":"+std::to_string(info.st_mtim.tv_nsec)+":"+
             std::to_string(info.st_ctim.tv_sec)+":"+std::to_string(info.st_ctim.tv_nsec);
     }
-    void refresh_external_diff() {
-        if (!ready() || !workspace || !show_diff || selected_staged || selected_file.empty() ||
-            conflict_open || !pending_kind.empty() || ImGui::GetTime()-diff_checked_at < 0.5) return;
-        diff_checked_at = ImGui::GetTime();
-        auto stamp = file_stamp();
-        if (stamp == watched_stamp) return;
-        watched_stamp = std::move(stamp);
-        auto root = repo.root; auto stop = cancel; auto name = selected_file;
-        launch("Updating file diff...",[root,stop,name] {
-            eg::Git git(root,stop); JobResult r; r.external_diff = true; r.preview_file = name;
-            r.files = eg::parse_status(git.checked({"status","--porcelain=v1","-z","--untracked-files=all"}));
-            auto found = std::find_if(r.files.begin(),r.files.end(),[&](const auto& f) { return f.path == name; });
-            if (found != r.files.end() && found->unstaged() && !found->conflicted()) r.detail = git.diff(*found,false);
-            r.message = "Updated " + visible_path(name); return r;
+    void silent_fetch(double now) {
+        if (!ready() || conflict_open || history_open || !pending_kind.empty() || !error.empty()) return;
+        if (fetch_job.valid()) {
+            if (fetch_job.wait_for(std::chrono::seconds(0)) != std::future_status::ready) return;
+            try { fetch_job.get(); } catch (const std::exception&) { /* Retry at the next interval. */ }
+        }
+        if (now < next_fetch_at) return;
+        next_fetch_at = now + 300;
+        auto root = repo.root; auto stop = fetch_cancel; *stop = false;
+        fetch_job = std::async(std::launch::async,[root,stop] {
+            eg::Git(root,stop).checked({"fetch","--all","--quiet","--no-write-fetch-head"});
         });
-        previewing = true;
+    }
+    void monitor_repository(double now) {
+        silent_fetch(now);
+        if (!ready() || conflict_open || history_open || !pending_kind.empty() || !error.empty()) return;
+        if (monitor_job.valid()) {
+            if (monitor_job.wait_for(std::chrono::seconds(0)) != std::future_status::ready) return;
+            try {
+                auto r = monitor_job.get();
+                if (monitor_generation != operation_generation) return;
+                monitor_signature = std::move(r.signature);
+                if (r.reload) {
+                    repo = std::move(r.snapshot); rebuild_history(); rebuild_file_lists();
+                    if (!r.preview_file.empty() && workspace && show_diff && selected_file == r.preview_file &&
+                        selected_staged == r.preview_staged && detail != r.detail) set_detail(std::move(r.detail));
+                }
+            } catch (const std::exception&) {
+                // Background failures retry next interval; explicit Refresh still reports errors.
+            }
+            return;
+        }
+        if (now - monitor_checked_at < 1.0) return;
+        monitor_checked_at = now; monitor_generation = operation_generation;
+        auto root = repo.root, previous = monitor_signature; auto stop = monitor_cancel;
+        auto preview = workspace && show_diff ? selected_file : std::string();
+        auto stamp = preview.empty() ? std::string() : file_stamp();
+        bool staged = selected_staged; int count = limit;
+        monitor_job = std::async(std::launch::async,[root,previous,stop,preview,stamp,staged,count] {
+            eg::Git git(root,stop); JobResult r;
+            r.signature = git.change_signature() + ":preview:" + std::to_string(preview.size()) + ":" + preview +
+                ":" + stamp + (staged ? ":staged" : ":unstaged") + ":" + std::to_string(count);
+            if (r.signature == previous) return r;
+            r.snapshot = git.load(count); r.reload = true;
+            r.preview_file = preview; r.preview_staged = staged;
+            auto found = std::find_if(r.snapshot.files.begin(),r.snapshot.files.end(),[&](const auto& f) { return f.path==preview; });
+            if (!preview.empty() && found!=r.snapshot.files.end() && !found->conflicted() && (staged ? found->staged() : found->unstaged()))
+                r.detail = git.diff(*found,staged);
+            return r;
+        });
     }
     void select_workspace() {
         if (busy()) return;
@@ -861,7 +902,7 @@ struct RepoTab {
     }
     void history() {
         ImGui::PushFont(body_font, 22); ImGui::TextUnformatted("Commit graph"); ImGui::PopFont();
-        ImGui::SameLine(); ImGui::TextColored(muted, "  %zu commits / %zu stashes", repo.commits.size(),repo.stashes.size());
+        same_line_if_fits(200); ImGui::TextColored(muted, "  %zu commits / %zu stashes", repo.commits.size(),repo.stashes.size());
         ImGui::SetNextItemWidth(-1);
         if (ImGui::InputTextWithHint("##search", "Search commits, stashes, authors, refs or SHA...", search, sizeof(search))) filter();
         if (search[0]) label("Filtered results: graph hidden to avoid false connections.");
@@ -1214,8 +1255,8 @@ struct RepoTab {
     void center_panel() {
         if (!show_diff) { history(); return; }
         if (button("< Commit graph")) return_to_graph();
-        ImGui::SameLine(); label(workspace ? (selected_staged ? "STAGED" : "UNSTAGED") : stash_view ? "STASH" : "COMMITTED");
-        ImGui::SameLine();
+        same_line_if_fits(90); label(workspace ? (selected_staged ? "STAGED" : "UNSTAGED") : stash_view ? "STASH" : "COMMITTED");
+        same_line_if_fits(110);
         if (button("Copy patch", !busy() && !detail.empty())) ImGui::SetClipboardText(detail.c_str());
         ImGui::Spacing();
         ImGui::PushFont(body_font,20); ImGui::TextUnformatted(visible_path(selected_file).c_str()); ImGui::PopFont();
@@ -1224,10 +1265,10 @@ struct RepoTab {
             if (button(selected_staged ? "Unstage lines" : "Stage lines",partial_available() && !selected_lines.empty()))
                 stage_diff_lines({selected_lines.begin(),selected_lines.end()});
             if (!selected_staged) {
-                ImGui::SameLine();
+                same_line_if_fits(130);
                 if (button("Discard lines",partial_available() && !selected_lines.empty())) request_discard_lines({selected_lines.begin(),selected_lines.end()});
             }
-            ImGui::SameLine(); ImGui::TextColored(muted,"%zu selected",selected_lines.size());
+            same_line_if_fits(100); ImGui::TextColored(muted,"%zu selected",selected_lines.size());
         }
         ImGui::Separator();
         diff_view();
@@ -1322,6 +1363,13 @@ struct RepoTab {
     void change_file(const eg::File& file, bool staged) {
         change_files({file},staged);
     }
+    void apply_file_change(const eg::File& file) {
+        if (!ready() || workspace) return;
+        auto commit = viewed_commit; auto stash = viewed_stash; bool saved = stash_view;
+        mutate("Apply file changes",[file,commit,stash,saved](const eg::Git& git) {
+            git.apply_file_diff(file,saved ? git.stash_diff(stash,file) : git.commit_diff(commit,file));
+        });
+    }
     void file_row(int index, int kind) {
         const auto& f = kind == 2 ? changed_files[index] : repo.files[index];
         bool staged = kind == 1;
@@ -1345,6 +1393,7 @@ struct RepoTab {
             auto chosen = chosen_files(kind);
             if (ImGui::MenuItem("View diff",nullptr,false,!busy())) select_file(f,staged);
             if (ImGui::MenuItem("View file history",nullptr,false,ready())) open_file_history(f,kind);
+            if (kind == 2 && ImGui::MenuItem("Apply changes to working file",nullptr,false,ready())) apply_file_change(f);
             if (kind != 2 && ImGui::MenuItem(staged ? "Unstage selected files" : "Stage selected files",nullptr,false,ready() && !chosen.empty()))
                 change_files(chosen,staged);
             bool discardable = !chosen.empty() && std::none_of(chosen.begin(),chosen.end(),[](const auto& file) { return file.conflicted(); });
@@ -1713,7 +1762,6 @@ struct RepoTab {
         ImGui::SameLine(0,0);
     }
     void frame() {
-        refresh_external_diff();
         header();
         float height = ImGui::GetContentRegionAvail().y - 36;
         float width = ImGui::GetContentRegionAvail().x;
@@ -1765,8 +1813,7 @@ struct App {
         auto json = eg::settings_json(settings);
         if (json == last_saved) return;
         if (!force && ImGui::GetTime()-window_changed_at < 0.25) return;
-        last_saved = json;
-        try { eg::write_settings(config_path,settings); config_error.clear(); }
+        try { eg::write_settings(config_path,settings); last_saved = std::move(json); config_error.clear(); }
         catch (const std::exception& e) {
             config_error = e.what();
             if (auto* tab = find(active)) tab->status = "Settings could not be saved. Open Settings for details.";
@@ -1899,9 +1946,13 @@ struct App {
         return std::any_of(tabs.begin(),tabs.end(),[](const auto& tab) { return tab->busy(); });
     }
     void shutdown() {
+        for (auto& tab : tabs) { *tab->cancel = true; *tab->monitor_cancel = true; *tab->fetch_cancel = true; }
+        for (auto& tab : tabs) {
+            if (tab->job.valid()) tab->job.wait();
+            if (tab->monitor_job.valid()) tab->monitor_job.wait();
+            if (tab->fetch_job.valid()) tab->fetch_job.wait();
+        }
         persist(true);
-        for (auto& tab : tabs) *tab->cancel = true;
-        for (auto& tab : tabs) if (tab->job.valid()) tab->job.wait();
     }
     void open_repository(const std::string& path) {
         auto* tab = find(active);
@@ -1935,7 +1986,7 @@ struct App {
         pending_refresh = 0;
         tab->load(tab->repo.root,true);
     }
-    void frame() {
+    void frame(bool monitor = true) {
         for (auto& tab : tabs) tab->poll();
         // Resolve subfolder/symlink aliases only after Git has identified the worktree root.
         for (size_t i=0;i<tabs.size();) {
@@ -2010,15 +2061,18 @@ struct App {
         if (close) request_close(close);
         if (pending_close && !ImGui::IsPopupOpen("Close repository?")) ImGui::OpenPopup("Close repository?");
         if (ImGui::BeginPopupModal("Close repository?",nullptr,ImGuiWindowFlags_AlwaysAutoResize)) {
-            ImGui::TextUnformatted("This repository has an unsubmitted commit message.");
+            ImGui::TextUnformatted("Close this repository tab?");
             ImGui::TextUnformatted("Close the tab and discard that message?");
-            if (button("Discard message and close")) { close_tab(pending_close); pending_close = 0; ImGui::CloseCurrentPopup(); }
+            if (button("Close repository")) { close_tab(pending_close); pending_close = 0; ImGui::CloseCurrentPopup(); }
             ImGui::SameLine();
             if (button("Keep tab")) { pending_close = 0; ImGui::CloseCurrentPopup(); }
             ImGui::EndPopup();
         }
         settings_dialog();
-        refresh_switched_repository(!ImGui::IsPopupOpen(nullptr,ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel));
+        bool allow_refresh = !ImGui::IsPopupOpen(nullptr,ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
+        refresh_switched_repository(allow_refresh);
+        if (monitor && allow_refresh && (!ImGui::IsAnyItemActive() || ImGui::GetIO().WantTextInput))
+            if (auto* tab = find(active)) tab->monitor_repository(ImGui::GetTime());
         persist();
         ImGui::End();
     }

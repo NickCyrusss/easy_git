@@ -175,6 +175,16 @@ void Git::stage_lines(const File& file,bool unstage,const std::string& preview,c
     if (remove) checked({"update-index","--force-remove","--",file.path});
     else checked({"update-index","--add","--cacheinfo",entry.mode,oid,file.path});
 }
+void Git::apply_file_diff(const File& file,const std::string& patch) const {
+    require_idle();
+    if (patch.empty() || patch.find("GIT binary patch") != std::string::npos || patch.find('\0') != std::string::npos)
+        throw std::runtime_error("Only a non-binary file diff can be applied.");
+    regular_path(root_,file.path);
+    TempFile source(patch);
+    auto include = "--include=" + file.path;
+    checked({"apply","--check",include,"--",source.path});
+    checked({"apply",include,"--",source.path});
+}
 void Git::discard_lines(const File& file,const std::string& preview,const std::vector<int>& selected) const {
     if (!file.unstaged() || file.conflicted() || !file.original.empty())
         throw std::runtime_error("Discard lines requires an unstaged regular file without conflicts or renames.");

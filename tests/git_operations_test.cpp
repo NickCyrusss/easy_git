@@ -29,6 +29,13 @@ int main() {
         git.checked({"config","core.autocrlf","false"});
         auto commit = [&](const char* message) { git.checked({"add","--all"}); git.commit(message); return git.read_commit("HEAD"); };
         write(root / "shared.txt","base\n"); auto base = commit("Base");
+        write(root / "shared.txt","applied from commit\n"); auto source = commit("Source change");
+        auto source_file = git.commit_files(source).at(0);
+        git.reset(base.id,"hard");
+        git.apply_file_diff(source_file,git.commit_diff(source,source_file));
+        require(read(root / "shared.txt") == "applied from commit\n" && git.checked({"show",":shared.txt"}) == "base\n",
+            "Applying a file diff changed the index or working file incorrectly");
+        git.reset(base.id,"hard");
         auto changed = [&](const std::string& path) {
             auto files = git.load().files;
             auto found = std::find_if(files.begin(),files.end(),[&](const auto& f) { return f.path == path; });

@@ -10,7 +10,7 @@ void require(bool condition, const char* message) {
     if (!condition) throw std::runtime_error(message);
 }
 void frame(App& app) {
-    ImGui::NewFrame(); app.frame(); ImGui::Render();
+    ImGui::NewFrame(); app.frame(false); ImGui::Render();
 }
 void settle(App& app) {
     auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
@@ -533,7 +533,13 @@ int main() {
         std::ofstream(root_b/"partial.txt") << watched_index << "external one\n";
         partial->load(root_b.string()); settle(restored); preview_partial(false);
         partial->pick_line(partial->hunk_lines(first_hunk()).back(),false,false);
-        auto refresh_external = [&] { partial->diff_checked_at=ImGui::GetTime()-1; frame(restored); settle(restored); };
+        double monitor_time = 0;
+        auto refresh_external = [&] {
+            monitor_time += 2; partial->monitor_repository(monitor_time);
+            require(!partial->busy(),"Silent monitor disabled repository actions");
+            if (partial->monitor_job.valid()) partial->monitor_job.wait();
+            partial->monitor_repository(monitor_time); settle(restored);
+        };
         std::ofstream(root_b/"partial.txt") << watched_index << "external two\n";
         refresh_external();
         require(partial->detail.find("+external two")!=std::string::npos && partial->detail.find("+external one")==std::string::npos &&
@@ -548,7 +554,9 @@ int main() {
         std::ofstream(root_b/"partial.txt") << watched_index << "external new\n"; refresh_external();
         require(partial->detail.find("+external new")!=std::string::npos,"Preview stopped watching after file became clean");
         std::ofstream(root_b/"partial.txt") << watched_index << "external end\n";
-        partial->diff_checked_at=ImGui::GetTime()-1; partial->refresh_external_diff(); partial->return_to_graph(); settle(restored);
+        monitor_time += 2; partial->monitor_repository(monitor_time); partial->return_to_graph();
+        if (partial->monitor_job.valid()) partial->monitor_job.wait();
+        partial->monitor_repository(monitor_time); settle(restored);
         require(!partial->show_diff && partial->selected_file.empty() && partial->detail.empty(),"External refresh reopened a closed preview");
         preview_partial(true); auto staged_preview=partial->detail;
         std::ofstream(root_b/"partial.txt") << watched_index << "unstaged only\n"; refresh_external();
@@ -593,6 +601,70 @@ int main() {
             require(history_tab.history_base==history_tab.viewed_commit.id,"Committed file history used HEAD instead of the selected commit");
             history_tab.open_file_history({"no-history.txt"},1); wait_history();
             require(history_tab.file_revisions.empty() && history_tab.history_selected==-1,"New file did not show empty history");
+        }
+        {
+            RepoTab watched; eg::Git git(root_a.string()); watched.repo=git.load(); watched.next_fetch_at=1e30;
+            watched.status="Keep status"; snprintf(watched.message,sizeof(watched.message),"Keep draft");
+            auto check = [&](double now) {
+                watched.monitor_repository(now);
+                require(!watched.busy() && watched.ready(),"Silent monitoring disabled repository actions");
+                if (watched.monitor_job.valid()) watched.monitor_job.wait();
+                watched.monitor_repository(now);
+                require(watched.status=="Keep status" && watched.error.empty() && std::string(watched.message)=="Keep draft","Monitor changed status, errors or draft");
+            };
+            check(0); auto branch=watched.repo.branch; watched.repo.branch="unchanged sentinel";
+            check(0.5); require(!watched.monitor_job.valid(),"Monitor ran more than once per second");
+            check(1); require(watched.repo.branch=="unchanged sentinel","Unchanged state was reloaded"); watched.repo.branch=branch;
+            std::ofstream(root_a/"silent-monitor.txt") << "one\n"; check(2);
+            require(std::any_of(watched.repo.files.begin(),watched.repo.files.end(),[](const auto& f) { return f.path=="silent-monitor.txt";}),"Silent monitor missed untracked files");
+            git.stage({"silent-monitor.txt"}); check(3);
+            watched.show_diff=true; watched.selected_staged=true; watched.selected_file="silent-monitor.txt";
+            watched.file_selection[1].insert("silent-monitor.txt");
+            std::ofstream(root_a/"silent-monitor.txt") << "two\n"; git.stage({"silent-monitor.txt"}); check(4);
+            require(watched.detail.find("+two")!=std::string::npos && watched.file_selection[1].count("silent-monitor.txt"),"Silent staged diff did not update or lost selection");
+            git.checked({"commit","--allow-empty","-m","Silent external commit"}); git.checked({"tag","silent-monitor-tag"}); check(5);
+            require(watched.repo.commits.front().subject=="Silent external commit" && std::any_of(watched.repo.refs.begin(),watched.repo.refs.end(),[](const auto& r) { return r.name=="silent-monitor-tag";}),"Monitor missed external commits or tags");
+            std::ofstream(root_a/"silent-stash.txt") << "older\n"; git.save_stash("silent older");
+            std::ofstream(root_a/"silent-stash.txt") << "newer\n"; git.save_stash("silent newer"); check(6);
+            auto count=watched.repo.stashes.size(); require(count>=2,"Monitor missed stashes");
+            git.checked({"stash","drop","stash@{1}"}); check(7);
+            require(watched.repo.stashes.size()==count-1,"Monitor missed dropping an older stash");
+            watched.pending_kind="confirmation"; watched.monitor_repository(8);
+            require(!watched.monitor_job.valid(),"Monitor ignored confirmation dialog"); watched.pending_kind.clear();
+            watched.monitor_repository(9); watched.load(watched.repo.root,true);
+            while(watched.busy()) { watched.poll(); std::this_thread::sleep_for(std::chrono::milliseconds(5)); }
+            watched.repo.branch="newer result";
+            if(watched.monitor_job.valid()) watched.monitor_job.wait(); watched.monitor_repository(9);
+            require(watched.repo.branch=="newer result","Old monitor result overwrote a newer operation");
+            watched.status="Keep status"; watched.repo.root=(base/"missing-repository").string(); check(10);
+            require(watched.repo.branch=="newer result","Failed background check altered the view");
+        }
+        {
+            auto source=base/"fetch-source"; fs::create_directory(source); eg::Git upstream(source.string());
+            upstream.checked({"init","--initial-branch=main"}); upstream.checked({"config","user.name","Fetch Test"});
+            upstream.checked({"config","user.email","fetch@example.invalid"}); upstream.checked({"config","commit.gpgsign","false"});
+            std::ofstream(source/"file.txt") << "initial\n"; upstream.stage({"file.txt"}); upstream.commit("Initial");
+            auto local=base/"silent-fetch"; eg::Git::clone(source.string(),local.string()); eg::Git git(local.string());
+            RepoTab tab; tab.repo=git.load(); tab.status="Keep status";
+            snprintf(tab.message,sizeof(tab.message),"Keep draft"); tab.show_diff=true; tab.selected_file="file.txt"; tab.set_detail("Keep preview");
+            auto old=git.checked({"rev-parse","origin/main"});
+            upstream.checked({"commit","--allow-empty","-m","Remote advance"}); auto tip=upstream.checked({"rev-parse","HEAD"});
+            tab.silent_fetch(0);
+            require(tab.fetch_job.valid() && !tab.busy() && tab.ready(),"Silent fetch blocked repository actions");
+            tab.fetch_job.wait(); tab.silent_fetch(0);
+            require(git.checked({"rev-parse","origin/main"})==tip && git.checked({"rev-parse","HEAD"})==old,"Silent fetch failed or changed the local branch");
+            require(tab.status=="Keep status" && tab.error.empty() && std::string(tab.message)=="Keep draft" && tab.detail=="Keep preview","Silent fetch altered status or draft/preview");
+            tab.monitor_repository(1); tab.monitor_job.wait(); tab.monitor_repository(1);
+            require(std::any_of(tab.repo.refs.begin(),tab.repo.refs.end(),[&](const auto& ref) { return ref.full=="refs/remotes/origin/main" && ref.id==tip.substr(0,tip.size()-1); }),"Monitor did not display fetched refs");
+            tab.silent_fetch(299); require(!tab.fetch_job.valid(),"Silent fetch ignored its five-minute interval");
+            upstream.checked({"commit","--allow-empty","-m","Second advance"}); tip=upstream.checked({"rev-parse","HEAD"});
+            tab.silent_fetch(300); tab.fetch_job.wait(); tab.silent_fetch(300);
+            require(git.checked({"rev-parse","origin/main"})==tip,"Scheduled fetch did not run again");
+            git.checked({"remote","set-url","origin",(base/"missing-remote").string()});
+            tab.silent_fetch(600); tab.fetch_job.wait(); tab.silent_fetch(600);
+            require(tab.error.empty() && tab.status=="Keep status","Failed silent fetch opened an error or changed status");
+            tab.silent_fetch(601); require(!tab.fetch_job.valid(),"Failed fetch retried too quickly");
+            tab.pending_kind="confirmation"; tab.silent_fetch(900); require(!tab.fetch_job.valid(),"Fetch started during confirmation");
         }
         restored.shutdown(); ImGui::DestroyContext(); fs::remove_all(base); return 0;
     } catch (const std::exception& e) {

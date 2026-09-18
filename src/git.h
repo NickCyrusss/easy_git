@@ -58,6 +58,7 @@ public:
     Result run(const std::vector<std::string>& args) const;
     std::string checked(const std::vector<std::string>& args) const;
     Snapshot load(int limit = 300) const;
+    std::string change_signature() const;
     std::string commit_detail(const std::string& id) const;
     std::vector<File> commit_files(const Commit& commit) const;
     std::string commit_diff(const Commit& commit, const File& file) const;
@@ -75,6 +76,7 @@ public:
     std::string operation_in_progress() const;
     void resolve_operation(const std::string& operation, const std::string& action) const;
     std::string diff(const File& file, bool staged) const;
+    void apply_file_diff(const File& file, const std::string& patch) const;
     void stage(const File& file) const;
     void unstage(const File& file, bool has_head) const;
     void discard(const File& file) const;
