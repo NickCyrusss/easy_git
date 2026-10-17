@@ -49,9 +49,13 @@ jobs:
         run: |
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" build-deb/easy-git_*.deb build-deb/SHA256SUMS --clobber
+            # Recreating a tag can leave its release as a draft, which anonymous
+            # downloads cannot see, so publish it explicitly on every run.
+            gh release edit "$RELEASE_TAG" --draft=false
           else
             gh release create "$RELEASE_TAG" build-deb/easy-git_*.deb build-deb/SHA256SUMS --verify-tag --title "Easy Git $RELEASE_TAG" --notes-file docs/release-notes.md
           fi
+          gh release view "$RELEASE_TAG" --json isDraft,tagName,assets --jq '{draft: .isDraft, tag: .tagName, assets: [.assets[].name]}'
   windows:
     runs-on: windows-latest
     timeout-minutes: 20
@@ -99,4 +103,8 @@ jobs:
       - name: Publish asset
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "$env:RELEASE_TAG" easy_git-win64.zip --clobber
+        run: |
+          gh release upload "$env:RELEASE_TAG" easy_git-win64.zip --clobber
+          gh release edit "$env:RELEASE_TAG" --draft=false
+          # Fail the job when the asset or the published state is missing.
+          gh release view "$env:RELEASE_TAG" --json isDraft,assets --jq 'if .isDraft then error("release is still a draft") else [.assets[].name] end'
