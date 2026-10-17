@@ -1,3 +1,29 @@
+Easy Git v0.1.4
+
+- Windows support: the Git process backend now uses CreateProcess with a job object, so the desktop app builds and runs on Windows 10/11 (x64) alongside Linux. Windows releases ship as a portable folder with the MinGW runtime, libcurl, and json-c DLLs.
+- Windows integration: the native folder picker replaces Zenity, Segoe UI and Consolas are used with a CJK fallback, the executable is a GUI-subsystem binary so no console window opens beside the window, and command-line arguments, the environment, and file paths are handled as UTF-8.
+- Line endings: partial staging and discard respect `core.autocrlf`, which Git for Windows enables by default.
+- Scratch files fall back to `%LOCALAPPDATA%\easy_git\tmp`, the executable directory, and then the working directory when the system temporary directory is not writable, so a restricted launch can still open repositories.
+- Tests cover both platforms: POSIX-only checks (symlinks, magic pathspecs, newlines in file names, the IANA timezone matrix) are skipped on Windows, and all five suites pass there.
+
+Download the Ubuntu 22.04 amd64 (x86-64) package or the Windows x64 portable folder:
+
+```sh
+sudo apt install ./easy-git_0.1.4_amd64.deb
+```
+
+Launch **Easy Git** from the application menu or run `easy_git`. Settings remain in `~/.easy_git`. `SHA256SUMS` contains the package checksum. On Windows, extract `easy_git-win64.zip` and run `easy_git.exe`; Git for Windows must be installed and on `PATH`.
+
+---
+
+- 新增 Windows 支持：Git 进程后端改用 CreateProcess 与作业对象，桌面程序可在 Windows 10/11（x64）与 Linux 上构建和运行；Windows 版以免安装目录形式发布，附带 MinGW 运行库、libcurl 和 json-c。
+- Windows 集成：使用系统原生文件夹选择器替代 Zenity；正文与等宽字体改为 Segoe UI、Consolas，并合并中文字形；可执行文件为 GUI 子系统程序，不再附带控制台窗口；命令行参数、环境变量和文件路径统一按 UTF-8 处理。
+- 换行符：按行暂存与丢弃兼容 `core.autocrlf`（Git for Windows 默认开启）。
+- 系统临时目录不可写时，临时文件依次回退到 `%LOCALAPPDATA%\easy_git\tmp`、程序所在目录和当前工作目录，受限环境下仍可打开仓库。
+- 测试覆盖两个平台：符号链接、魔法路径、文件名换行、IANA 时区矩阵等仅限 POSIX 的检查在 Windows 上跳过，五组测试在 Windows 上全部通过。
+
+下载 Ubuntu 22.04 amd64（x86-64）安装包，或 Windows x64 免安装压缩包，执行上方安装命令。随后从应用菜单打开 **Easy Git**，或运行 `easy_git`；配置保存在 `~/.easy_git`。`SHA256SUMS` 提供安装包校验值。Windows 下解压 `easy_git-win64.zip` 后运行 `easy_git.exe`，需已安装 Git for Windows 并位于 `PATH`。
+
 Easy Git v0.1.3
 
 - File history from file-list context menus: browse commits and their file diffs, follow renames, inspect deleted files, load more entries, and copy patches. Includes a history screenshot.

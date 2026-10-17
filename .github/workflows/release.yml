@@ -7,7 +7,7 @@ on:
       tag:
         description: Existing version tag to publish
         required: true
-        default: v0.1.3
+        default: v0.1.4
 env:
   RELEASE_TAG: ${{ inputs.tag || (github.ref_type == 'tag' && github.ref_name) || 'v0.1.3' }}
 permissions:
@@ -52,3 +52,46 @@ jobs:
           else
             gh release create "$RELEASE_TAG" build-deb/easy-git_*.deb build-deb/SHA256SUMS --verify-tag --title "Easy Git $RELEASE_TAG" --notes-file docs/release-notes.md
           fi
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    # The Debian job creates the release, so this one only has to add its asset.
+    needs: deb
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: false
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-curl
+            mingw-w64-ucrt-x86_64-json-c
+            zip
+      - name: Configure and build
+        shell: msys2 {0}
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build -j 4
+      - name: Test
+        shell: msys2 {0}
+        run: |
+          export PATH="/c/Program Files/Git/cmd:$PATH"
+          ctest --test-dir build --output-on-failure
+      - name: Assemble portable package
+        shell: msys2 {0}
+        run: |
+          mkdir -p package
+          cp build/easy_git.exe LICENSE package/
+          # The executable is dynamically linked, so ship its runtime next to it.
+          ldd build/easy_git.exe | awk '/ucrt64\/bin/ {print $3}' | while read -r dll; do cp "$dll" package/; done
+          cd package && zip -9 ../easy_git-win64.zip ./*
+      - name: Publish asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$env:RELEASE_TAG" easy_git-win64.zip --clobber
