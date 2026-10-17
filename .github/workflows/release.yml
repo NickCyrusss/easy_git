@@ -48,7 +48,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" build-deb/easy-git_*.deb build-deb/SHA256SUMS
+            gh release upload "$RELEASE_TAG" build-deb/easy-git_*.deb build-deb/SHA256SUMS --clobber
           else
             gh release create "$RELEASE_TAG" build-deb/easy-git_*.deb build-deb/SHA256SUMS --verify-tag --title "Easy Git $RELEASE_TAG" --notes-file docs/release-notes.md
           fi
@@ -64,14 +64,19 @@ jobs:
       - uses: msys2/setup-msys2@v2
         with:
           msystem: UCRT64
-          update: false
-          install: >-
-            mingw-w64-ucrt-x86_64-gcc
-            mingw-w64-ucrt-x86_64-cmake
-            mingw-w64-ucrt-x86_64-ninja
-            mingw-w64-ucrt-x86_64-pkgconf
-            mingw-w64-ucrt-x86_64-curl
-            mingw-w64-ucrt-x86_64-json-c
+          # A stale package database makes pacman request versions the mirrors
+          # no longer carry, so upgrade first instead of relying on the image.
+          update: true
+      - name: Install toolchain
+        shell: msys2 {0}
+        run: |
+          pacman -S --needed --noconfirm \
+            mingw-w64-ucrt-x86_64-gcc \
+            mingw-w64-ucrt-x86_64-cmake \
+            mingw-w64-ucrt-x86_64-ninja \
+            mingw-w64-ucrt-x86_64-pkgconf \
+            mingw-w64-ucrt-x86_64-curl \
+            mingw-w64-ucrt-x86_64-json-c \
             zip
       - name: Configure and build
         shell: msys2 {0}
