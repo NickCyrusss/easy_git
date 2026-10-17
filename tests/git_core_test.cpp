@@ -1,31 +1,46 @@
 #include "git.h"
+#include "fs_helpers.h"
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
-#include <unistd.h>
 
 namespace fs = std::filesystem;
 void require(bool ok, const char* message) { if (!ok) throw std::runtime_error(message); }
-void write(const fs::path& path, const std::string& text) { std::ofstream(path) << text; }
+void write(const fs::path& path, const std::string& text) { std::ofstream(path, std::ios::binary) << text; }
+std::string read(const fs::path& path) { std::ifstream in(path, std::ios::binary); return {std::istreambuf_iterator<char>(in),{}}; }
 const eg::File& file_named(const eg::Snapshot& s, const std::string& name) {
     auto f = std::find_if(s.files.begin(),s.files.end(),[&](const auto& f) { return f.path == name; });
     require(f != s.files.end(),"Expected changed file is missing"); return *f;
 }
 
 int main(int argc, char** argv) {
-    char path[] = "/tmp/easy-git-test-XXXXXX";
-    auto* temp = mkdtemp(path);
-    if (!temp) return 1;
-    fs::path base(temp), root = base / "orbit workspace 中文";
+    fs::path base = eg::make_test_directory("easy-git-test-");
+    fs::path root = base / "orbit workspace 中文";
     bool keep = argc > 1 && std::string(argv[1]) == "--keep";
     try {
+#ifdef _WIN32
+        // Windows ships no printf/false/sleep; the same runner contract is probed
+        // through Git, which must also receive these arguments literally.
+        std::string literal_text = "中文 folder $(literal) ; & | [x]";
+        fs::path probe_dir = eg::make_test_directory("easy-git-probe-");
+        eg::Git probe(probe_dir.string());
+        probe.checked({"init","--initial-branch=probe"});
+        probe.checked({"config","test.literal",literal_text});
+        require(probe.checked({"config","--get","test.literal"}) == literal_text + "\n",
+                "Process arguments were not preserved");
+        eg::remove_tree(probe_dir);
+        require(eg::run_process({"cmd","/c","exit","3"}).code == 3, "Dialog cancellation exit code lost");
+        auto cancelled = std::make_shared<std::atomic_bool>(true);
+        require(eg::run_process({"ping","-n","30","127.0.0.1"}, cancelled, 0).code == 124, "Dialog process did not cancel");
+#else
         auto literal = eg::run_process({"printf", "%s", "中文 folder $(literal)\n"});
         require(literal.code == 0 && literal.out == "中文 folder $(literal)\n", "Process arguments were not preserved");
         require(eg::run_process({"false"}).code == 1, "Dialog cancellation exit code lost");
         auto cancelled = std::make_shared<std::atomic_bool>(true);
         require(eg::run_process({"sleep", "10"}, cancelled, 0).code == 124, "Dialog process did not cancel");
+#endif
         fs::create_directory(root);
         eg::Git git(root.string());
         git.checked({"init","--initial-branch=main"});
@@ -64,7 +79,9 @@ int main(int argc, char** argv) {
         require(!file_named(git.load(),special).staged(),"Unstage failed");
         git.stage(file_named(git.load(),special)); git.commit("Refine workspace notes");
 
-        std::string renamed = "renamed 中文\nnotes.txt";
+        // Win32 file names cannot hold a newline, so the rename fixture keeps the
+        // CJK and separator coverage and uses the platform separator instead.
+        std::string renamed = std::string("renamed 中文") + eg::unusual_name_separator + "notes.txt";
         git.checked({"mv","--",special,renamed});
         f = file_named(git.load(),renamed);
         require(f.index == 'R' && f.original == special,"NUL-separated rename parsing failed");
@@ -160,7 +177,13 @@ int main(int argc, char** argv) {
             eg::Git history(history_root.string()); history.checked({"init","--initial-branch=main"});
             history.checked({"config","user.name","History Tester"}); history.checked({"config","user.email","history@example.invalid"});
             history.checked({"config","commit.gpgsign","false"});
-            std::string old_name="old 中文\nfile.txt", new_name=":(glob)new [x].txt";
+#ifdef _WIN32
+            // A colon cannot appear in a Win32 file name, so the magic pathspec
+            // prefix is only exercised on POSIX.
+            std::string old_name=std::string("old 中文")+eg::unusual_name_separator+"file.txt", new_name="glob new [x].txt";
+#else
+            std::string old_name=std::string("old 中文")+eg::unusual_name_separator+"file.txt", new_name=":(glob)new [x].txt";
+#endif
             write(history_root/old_name,"one\ntwo\nthree\n"); history.stage({old_name}); history.commit("Create file");
             auto first = history.read_commit("HEAD");
             history.checked({"mv","--",old_name,new_name}); history.commit("Rename file");
@@ -182,11 +205,11 @@ int main(int argc, char** argv) {
         }
         std::cout << "PASS: empty repo, literal paths, diff, stage/unstage, commit, rename, merge graph, pagination, detached HEAD, stash and local remote\n";
         if (keep) std::cout << root.string() << '\n';
-        else fs::remove_all(base);
+        else eg::remove_tree(base);
         return 0;
     } catch (const std::exception& e) {
         std::cerr << "FAIL: " << e.what() << "\nFixture: " << root << '\n';
-        if (!keep) fs::remove_all(base);
+        if (!keep) eg::remove_tree(base);
         return 1;
     }
 }

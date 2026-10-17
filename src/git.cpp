@@ -4,22 +4,47 @@
 #include <chrono>
 #include <cstdio>
 #include <cstring>
-#include <fcntl.h>
 #include <fstream>
 #include <filesystem>
-#include <signal.h>
-#include <spawn.h>
 #include <sstream>
 #include <stdexcept>
+#include <thread>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <fcntl.h>
+#include <signal.h>
+#include <spawn.h>
 #include <sys/wait.h>
 #include <sys/stat.h>
-#include <thread>
 #include <unistd.h>
-
 extern char** environ;
+#endif
 namespace eg {
 namespace {
+#ifndef _WIN32
 constexpr size_t output_limit = 8 * 1024 * 1024;
+#endif
+// The Git child inherits the filtered environment. Windows keeps its environment
+// in UTF-16, so read it there instead of the ANSI _environ table.
+std::vector<std::string> process_environment() {
+    std::vector<std::string> entries;
+#ifdef _WIN32
+    LPWCH block = GetEnvironmentStringsW();
+    if (!block) return entries;
+    for (LPWCH item = block; *item; item += wcslen(item) + 1) {
+        std::wstring wide(item);
+        int need = WideCharToMultiByte(CP_UTF8, 0, wide.data(), int(wide.size()), nullptr, 0, nullptr, nullptr);
+        std::string entry(size_t(std::max(need, 0)), '\0');
+        if (need > 0) WideCharToMultiByte(CP_UTF8, 0, wide.data(), int(wide.size()), entry.data(), need, nullptr, nullptr);
+        entries.push_back(std::move(entry));
+    }
+    FreeEnvironmentStringsW(block);
+#else
+    for (char** e = environ; *e; ++e) entries.emplace_back(*e);
+#endif
+    return entries;
+}
 std::string field(const std::string& bytes, size_t& pos) {
     if (pos >= bytes.size()) throw std::runtime_error("Incomplete Git output");
     auto end = bytes.find('\0', pos);
@@ -32,6 +57,9 @@ std::string trim_line(std::string s) {
     while (!s.empty() && (s.back() == '\n' || s.back() == '\r')) s.pop_back();
     return s;
 }
+#ifndef _WIN32
+// The POSIX runner drains these streams itself; the Windows runner reads its
+// capture files directly in process_win.cpp.
 std::string read_output(FILE* stream, bool& truncated) {
     rewind(stream);
     std::string out;
@@ -46,6 +74,7 @@ std::string read_output(FILE* stream, bool& truncated) {
     }
     return out;
 }
+#endif
 }
 
 bool File::conflicted() const {
@@ -65,15 +94,20 @@ Result Git::run(const std::vector<std::string>& args) const {
     if (args.empty() || args.front() != "stash") words.push_back("--literal-pathspecs");
     words.insert(words.end(), args.begin(), args.end());
     std::vector<std::string> env;
-    for (char** e = environ; *e; ++e) {
-        std::string s = *e;
+    for (auto& s : process_environment()) {
         auto key = s.substr(0, s.find('='));
         if (key != "GIT_TERMINAL_PROMPT" && key != "GIT_ASKPASS" && key != "SSH_ASKPASS" &&
             key != "GIT_DIR" && key != "GIT_WORK_TREE" && key != "GIT_INDEX_FILE" &&
-            key != "GIT_COMMON_DIR" && key != "GIT_EDITOR" && key != "GIT_SEQUENCE_EDITOR") env.push_back(s);
+            key != "GIT_COMMON_DIR" && key != "GIT_EDITOR" && key != "GIT_SEQUENCE_EDITOR") env.push_back(std::move(s));
     }
+#ifdef _WIN32
+    // Empty askpass values keep credential helpers non-interactive without Unix paths.
+    env.insert(env.end(), {"GIT_TERMINAL_PROMPT=0", "GIT_ASKPASS=",
+        "SSH_ASKPASS=", "GIT_EDITOR=true", "GIT_SEQUENCE_EDITOR=true"});
+#else
     env.insert(env.end(), {"GIT_TERMINAL_PROMPT=0", "GIT_ASKPASS=/bin/false",
         "SSH_ASKPASS=/bin/false", "GIT_EDITOR=true", "GIT_SEQUENCE_EDITOR=true"});
+#endif
     std::vector<char*> envp;
     for (auto& e : env) envp.push_back(e.data());
     envp.push_back(nullptr);
@@ -81,6 +115,7 @@ Result Git::run(const std::vector<std::string>& args) const {
     return run_process(std::move(words), cancel_, 120, envp.data());
 }
 
+#ifndef _WIN32
 Result run_process(std::vector<std::string> words, const std::shared_ptr<std::atomic_bool>& cancel,
                    int timeout_seconds, char* const* environment) {
     if (words.empty() || words.front().empty()) throw std::runtime_error("Missing executable");
@@ -140,6 +175,7 @@ Result run_process(std::vector<std::string> words, const std::shared_ptr<std::at
     }
     return result;
 }
+#endif  // !_WIN32
 
 std::string Git::checked(const std::vector<std::string>& args) const {
     auto r = run(args);
@@ -231,6 +267,9 @@ Snapshot Git::load(int limit) const {
     if (trim_line(checked({"rev-parse", "--is-inside-work-tree"})) != "true")
         throw std::runtime_error("Open a working repository; bare repositories are not supported.");
     s.root = trim_line(checked({"rev-parse", "--show-toplevel"}));
+    // Git reports the worktree with forward slashes; keep the native separator so
+    // this value compares and joins exactly like the path the user opened.
+    s.root = std::filesystem::path(s.root).make_preferred().string();
     // All file paths and subsequent operations are rooted at the worktree, even when opening a subfolder.
     Git repo(s.root, cancel_);
     s.operation = repo.operation_in_progress();

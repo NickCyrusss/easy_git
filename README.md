@@ -2,7 +2,7 @@
 
 **English** | [简体中文](README.zh-CN.md)
 
-A Linux desktop Git client built with **C++17 and Dear ImGui**, featuring commit graphs, multi-repository tabs, and optional AI commit messages.
+A desktop Git client for **Linux and Windows**, built with **C++17 and Dear ImGui**, featuring commit graphs, multi-repository tabs, and optional AI commit messages.
 
 Easy Git takes inspiration from GitKraken's three-panel interface. It is an independent project and is not affiliated with or endorsed by GitKraken. The project is in early development and is available under the [MIT license](LICENSE).
 
@@ -25,13 +25,11 @@ Easy Git takes inspiration from GitKraken's three-panel interface. It is an inde
 
 ## Debian package
 
-This README describes the current source tree. Silent monitoring, automatic fetch, and applying a historical file diff are newer than the v0.1.3 package; build from source to use them.
-
-Download the [v0.1.3 amd64 `.deb`](https://github.com/NickCyrusss/easy_git/releases/download/v0.1.3/easy-git_0.1.3_amd64.deb) and [SHA256SUMS](https://github.com/NickCyrusss/easy_git/releases/download/v0.1.3/SHA256SUMS) from [GitHub Releases](https://github.com/NickCyrusss/easy_git/releases/tag/v0.1.3). Packages are built and tested on Ubuntu 22.04 (x86-64).
+Download the [v0.1.4 amd64 `.deb`](https://github.com/NickCyrusss/easy_git/releases/download/v0.1.4/easy-git_0.1.4_amd64.deb) and [SHA256SUMS](https://github.com/NickCyrusss/easy_git/releases/download/v0.1.4/SHA256SUMS) from [GitHub Releases](https://github.com/NickCyrusss/easy_git/releases/tag/v0.1.4). Packages are built and tested on Ubuntu 22.04 (x86-64).
 
 ```sh
 sha256sum -c SHA256SUMS
-sudo apt install ./easy-git_0.1.3_amd64.deb
+sudo apt install ./easy-git_0.1.4_amd64.deb
 ```
 
 The package includes the application-menu launcher and icon. Launch **Easy Git** or run `easy_git`; remove with `sudo apt remove easy-git`. User configuration in `~/.easy_git` is retained.
@@ -45,11 +43,17 @@ ctest --test-dir build-deb --output-on-failure
 (cd build-deb && cpack -G DEB)
 ```
 
-The `.deb` is written to `build-deb/`. Pushing a version tag matching the CMake version (for example `v0.1.3`) runs the Debian release workflow: build, test, install-check, and upload the package and checksum to GitHub Releases.
+The `.deb` is written to `build-deb/`. Pushing a version tag matching the CMake version (for example `v0.1.4`) runs the release workflow: build and test the Debian package on Ubuntu, verify the install and the desktop entry, build and test the Windows package on `windows-latest`, then upload both assets to GitHub Releases.
+
+## Windows package
+
+Download [easy_git-win64.zip](https://github.com/NickCyrusss/easy_git/releases/download/v0.1.4/easy_git-win64.zip), extract it, and run `easy_git.exe`. The folder contains the executable, the runtime DLLs, and the license; Git for Windows must be installed and on `PATH`. Build it yourself with the steps under [Windows](#windows) below.
 
 ## Build and run
 
-Requires Linux, Git, CMake 3.22+, a C++17 compiler, OpenGL, X11, libcurl, and json-c. On Ubuntu/Debian:
+Supported platforms are Linux (X11) and Windows 10/11 on x64. In both cases you need Git, CMake 3.22+, a C++17 compiler, OpenGL, libcurl, and json-c.
+
+On Ubuntu/Debian:
 
 ```sh
 sudo apt install build-essential cmake ninja-build git libgl1-mesa-dev \
@@ -73,6 +77,36 @@ cmake --install build
 
 This installs the executable, desktop launcher, and icon. Launch **Easy Git** from the application menu; file managers may still show a generic icon for the ELF executable itself.
 
+### Windows
+
+Build with the [MSYS2](https://www.msys2.org/) UCRT64 toolchain; Git for Windows must be installed and on `PATH`. Open the **MSYS2 UCRT64** shell, install the toolchain and libraries once, then configure and build:
+
+```sh
+pacman -S --needed mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-cmake \
+  mingw-w64-ucrt-x86_64-ninja mingw-w64-ucrt-x86_64-pkgconf \
+  mingw-w64-ucrt-x86_64-curl mingw-w64-ucrt-x86_64-json-c
+
+git clone https://github.com/NickCyrusss/easy_git.git
+cd easy_git
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j 8
+./build/easy_git.exe C:/path/to/repository
+```
+
+Use the UCRT64 environment rather than MINGW64 or MSYS: `libcurl` and `json-c` come from that repository, so the compiler and the libraries must match. Any MSYS2 installation directory works; the paths below assume the default `C:\msys64`.
+
+The result is a dynamically linked `build/easy_git.exe`. It needs the MinGW runtime, libcurl, and json-c DLLs, so either put `C:\msys64\ucrt64\bin` on `PATH` when launching it, or copy the dependencies beside the executable for a portable folder:
+
+```sh
+ldd build/easy_git.exe | awk '/ucrt64\/bin/ {print $3}' | while read -r dll; do cp "$dll" build/; done
+```
+
+CMake's `install` and `CPack` rules and the `.desktop` launcher remain Debian-only; on Windows the application is a portable folder. The embedded window icon is used for the window and taskbar, and there is no installer or Start-menu entry.
+
+The executable is linked as a GUI-subsystem program, so double-clicking it opens only the application window; no console window appears beside it. When it is started from an existing cmd or PowerShell console it attaches to that console, so `--help` and error output are still visible. Console hosts do not wait for GUI programs, so scripts that must observe the result use a wait, for example `Start-Process -Wait` in PowerShell or `start /wait` in cmd.
+
+Settings live in `%USERPROFILE%\.easy_git`. Git commands capture their output through files in the system temporary directory; when that directory is not writable (sandboxed launches, redirected or policy-restricted `%TEMP%`), the app falls back to `%LOCALAPPDATA%\easy_git\tmp`, then the executable's directory, then the working directory. Use `--config <path>` to keep a separate profile, which is also the workaround when the profile directory itself is read-only.
+
 Use **Browse...** to choose a repository, or pass one or more paths:
 
 ```sh
@@ -80,7 +114,7 @@ Use **Browse...** to choose a repository, or pass one or more paths:
 ./build/easy_git /path/to/repository-a /path/to/repository-b
 ```
 
-The folder picker uses Zenity. Manual path entry remains available when it is not installed. Paths inside a repository resolve to its root, and reopening the same root selects its existing tab.
+The folder picker uses Zenity on Linux and the native folder dialog on Windows. Manual path entry remains available when no picker is available. Paths inside a repository resolve to its root, and reopening the same root selects its existing tab.
 
 CMake downloads Dear ImGui **v1.92.5** and GLFW **3.4** with SHA-256 verification. For offline builds, set `FETCHCONTENT_SOURCE_DIR_IMGUI` and `FETCHCONTENT_SOURCE_DIR_GLFW` to local source directories, or place those versions in `.deps/imgui-1.92.5` and `.deps/glfw-3.4`.
 
@@ -169,7 +203,7 @@ Git authentication uses your existing SSH configuration or credential helper. Th
 ctest --test-dir build --output-on-failure
 ```
 
-Tests create disposable repositories under `/tmp`:
+Tests create disposable repositories in the system temporary directory (`/tmp` on Linux, `%TEMP%` on Windows), falling back to `%LOCALAPPDATA%\easy_git\tmp`, the build directory, and the working directory when that is not writable. On Windows, checks that need POSIX behaviour are skipped: symlink handling, `:(glob)` magic pathspecs, newlines in file names, and the timezone matrix that relies on the IANA database. `core.autocrlf` is exercised through the normal partial staging and discard paths.
 
 | Test | Coverage |
 | --- | --- |
@@ -189,13 +223,23 @@ cmake --build build-core -j 4
 ctest --test-dir build-core --output-on-failure
 ```
 
-Optional GUI smoke check, with `xvfb` and `xauth` installed:
+Optional GUI smoke check. On Linux, with `xvfb` and `xauth` installed:
 
 ```sh
 xvfb-run -a -s '-screen 0 1440x900x24' \
   ./build/easy_git /path/to/repository --config /tmp/easy-git-smoke.json \
   --frames 30 --screenshot /tmp/easy-git.ppm
 ```
+
+On Windows the same flags run against the desktop session and write a PPM the same way. Because the shell does not wait for a GUI-subsystem program, start it with a wait so the file exists when the command returns:
+
+```powershell
+Start-Process -FilePath .\build\easy_git.exe `
+  -ArgumentList 'C:\path\to\repository','--config',"$env:TEMP\easy-git-smoke.json",'--frames','30','--screenshot',"$env:TEMP\easy-git.ppm" `
+  -Wait
+```
+
+The Windows run needs an interactive desktop session with an OpenGL 3.3 driver, and a window appears while the frames are rendered.
 
 Screenshots in `docs/` come from the running application with temporary demonstration repositories. Mouse-driven checks cover staging one hunk, confirming discard of another while preserving staged content, and unstaging the first hunk while retaining its working-tree edits. Native window resizing and restart restoration were also checked under Xvfb: resizing to 1220 × 780 automatically saved only width/height, and the next launch restored that size.
 
@@ -207,7 +251,8 @@ xvfb-run -a python3 tests/icon_smoke.py build/easy_git
 
 ## Current limitations
 
-- Linux/X11 only; Wayland desktops require XWayland. The minimum window size is 1080×720. Windows and macOS process backends are not implemented.
+- Linux (X11) and Windows 10/11 (x64) are supported; Wayland desktops require XWayland, and a macOS process backend is not implemented. The minimum window size is 1080×720.
+- Windows builds are portable folders: CMake's `install`/`CPack` targets, the `.desktop` launcher, and icon registration remain Linux-only, so the DLLs produced by the toolchain must stay beside the executable or on `PATH`.
 - No interactive rebase editor or commit drag-and-drop. Existing externally started rebases can be continued or aborted.
 - Partial staging, unstaging, discard, and conflict editing operate on regular text files; binary conflict resolution is whole-version only. Symlinks/submodules and renamed files require whole-file or external operations.
 - Merge diffs use the first parent. History loads in batches of 300; search covers loaded commits only, and graph edges are hidden while filtering.
@@ -216,7 +261,7 @@ xvfb-run -a python3 tests/icon_smoke.py build/easy_git
 
 ## Contributing
 
-Issues and pull requests are welcome. Include your Linux distribution, reproduction steps, and relevant error messages in a [bug report](https://github.com/NickCyrusss/easy_git/issues). Do not include API keys, personal configuration files, or private repository content. Run the relevant tests for Git, settings, or AI changes, and describe how you checked any UI changes.
+Issues and pull requests are welcome. Include your operating system (Linux distribution or Windows version), reproduction steps, and relevant error messages in a [bug report](https://github.com/NickCyrusss/easy_git/issues). Do not include API keys, personal configuration files, or private repository content. Run the relevant tests for Git, settings, or AI changes, and describe how you checked any UI changes.
 
 ## License and acknowledgments
 

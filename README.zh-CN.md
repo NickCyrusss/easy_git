@@ -2,7 +2,7 @@
 
 [English](README.md) | **简体中文**
 
-使用 **C++17 + Dear ImGui + GLFW + OpenGL** 实现的 Linux 桌面 Git 客户端。提供多仓库标签页、提交关系图、浅色/深色主题和可选的 AI 提交信息生成。界面参考 GitKraken；本项目独立开发，与 GitKraken 无隶属或合作关系。
+使用 **C++17 + Dear ImGui + GLFW + OpenGL** 实现的 **Linux 与 Windows** 桌面 Git 客户端。提供多仓库标签页、提交关系图、浅色/深色主题和可选的 AI 提交信息生成。界面参考 GitKraken；本项目独立开发，与 GitKraken 无隶属或合作关系。
 
 项目处于早期开发阶段，采用 [MIT 许可证](LICENSE)。
 
@@ -10,13 +10,11 @@
 
 ## Debian 安装包
 
-本文档描述当前源码。静默监控、自动 Fetch 和应用历史文件 Diff 是 v0.1.3 安装包之后新增的功能，使用这些功能请从源码构建。
-
-从 [GitHub Releases](https://github.com/NickCyrusss/easy_git/releases/tag/v0.1.3) 下载 [v0.1.3 amd64 安装包](https://github.com/NickCyrusss/easy_git/releases/download/v0.1.3/easy-git_0.1.3_amd64.deb) 和 [SHA256SUMS](https://github.com/NickCyrusss/easy_git/releases/download/v0.1.3/SHA256SUMS)。安装包在 Ubuntu 22.04（x86-64）上构建和验证。
+从 [GitHub Releases](https://github.com/NickCyrusss/easy_git/releases/tag/v0.1.4) 下载 [v0.1.4 amd64 安装包](https://github.com/NickCyrusss/easy_git/releases/download/v0.1.4/easy-git_0.1.4_amd64.deb) 和 [SHA256SUMS](https://github.com/NickCyrusss/easy_git/releases/download/v0.1.4/SHA256SUMS)。安装包在 Ubuntu 22.04（x86-64）上构建和验证。
 
 ```sh
 sha256sum -c SHA256SUMS
-sudo apt install ./easy-git_0.1.3_amd64.deb
+sudo apt install ./easy-git_0.1.4_amd64.deb
 ```
 
 包含应用菜单入口和图标。安装后打开 **Easy Git** 或运行 `easy_git`；卸载使用 `sudo apt remove easy-git`，保留用户目录中的 `~/.easy_git` 配置。
@@ -30,11 +28,17 @@ ctest --test-dir build-deb --output-on-failure
 (cd build-deb && cpack -G DEB)
 ```
 
-产物位于 `build-deb/`。推送与 CMake 版本一致的标签（如 `v0.1.3`）会运行 Debian 发布工作流，依次构建、测试、验证安装，并上传安装包和校验文件至 GitHub Releases。
+产物位于 `build-deb/`。推送与 CMake 版本一致的标签（如 `v0.1.4`）会运行发布工作流：在 Ubuntu 上构建并测试 Debian 安装包、验证安装与桌面入口，在 `windows-latest` 上构建并测试 Windows 包，最后把两者一并上传至 GitHub Releases。
+
+## Windows 安装包
+
+下载 [easy_git-win64.zip](https://github.com/NickCyrusss/easy_git/releases/download/v0.1.4/easy_git-win64.zip)，解压后运行 `easy_git.exe`。压缩包内含可执行文件、运行时 DLL 和许可证；需已安装 Git for Windows 并位于 `PATH`。自行构建见下方 [Windows](#windows) 小节。
 
 ## 构建与启动
 
-依赖：Git、CMake 3.22+、C++17 编译器、OpenGL、X11、libcurl 和 json-c 开发库。Ubuntu/Debian 可安装：
+支持 Linux（X11）与 Windows 10/11（x64）。两者都需要 Git、CMake 3.22+、C++17 编译器、OpenGL、libcurl 和 json-c。
+
+Ubuntu/Debian 可安装：
 
 ```sh
 sudo apt install build-essential cmake ninja-build git libgl1-mesa-dev \
@@ -64,7 +68,37 @@ cmake --install build
 
 安装包含程序、桌面启动入口和图标。请从应用菜单启动；文件管理器中的 ELF 可执行文件本身仍可能显示通用图标。
 
-也可直接运行 `./build/easy_git`，点击 **Browse...** 浏览并选择文件夹，再点击 **Open repository**；也支持手动输入路径。取消浏览会保留原路径。文件夹浏览使用系统 Zenity 选择器，未安装时会提示并保留手动输入入口。可打开仓库子目录，操作会自动定位至仓库根目录。
+### Windows
+
+使用 [MSYS2](https://www.msys2.org/) 的 UCRT64 工具链构建，并确保系统已安装 Git for Windows、且 `git` 在 `PATH` 中。打开 **MSYS2 UCRT64** 终端，首次安装工具链与依赖后即可配置和编译：
+
+```sh
+pacman -S --needed mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-cmake \
+  mingw-w64-ucrt-x86_64-ninja mingw-w64-ucrt-x86_64-pkgconf \
+  mingw-w64-ucrt-x86_64-curl mingw-w64-ucrt-x86_64-json-c
+
+git clone https://github.com/NickCyrusss/easy_git.git
+cd easy_git
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j 8
+./build/easy_git.exe C:/路径/你的仓库
+```
+
+请使用 UCRT64 环境而不是 MINGW64 或 MSYS：`libcurl` 和 `json-c` 来自该仓库，编译器和库必须来自同一套件。MSYS2 可安装在任意目录，下文以默认的 `C:\msys64` 为例。
+
+生成的是动态链接的 `build/easy_git.exe`，运行时需要 MinGW 运行库、libcurl 和 json-c 的 DLL。可以把 `C:\msys64\ucrt64\bin` 加入 `PATH` 后运行，也可以把依赖复制到程序旁边，做成免安装目录：
+
+```sh
+ldd build/easy_git.exe | awk '/ucrt64\/bin/ {print $3}' | while read -r dll; do cp "$dll" build/; done
+```
+
+CMake 的 `install`、`CPack` 规则和 `.desktop` 启动入口仅适用于 Debian；Windows 下程序为免安装目录形式，内嵌图标用于窗口与任务栏，不提供安装包或开始菜单项。
+
+可执行文件为 GUI 子系统程序：双击只会打开应用窗口，不会再附带一个控制台窗口。从已有的 cmd 或 PowerShell 窗口启动时，程序会附着到该控制台，因此 `--help` 和错误输出仍然可见。命令行宿主不会等待 GUI 程序结束，脚本中如需等待结果，请使用 `Start-Process -Wait`（PowerShell）或 `start /wait`（cmd）。
+
+配置保存在 `%USERPROFILE%\.easy_git`。Git 命令通过系统临时目录中的文件捕获输出；当该目录不可写时（受限沙箱启动、`%TEMP%` 被重定向或受策略限制），程序会依次回退到 `%LOCALAPPDATA%\easy_git\tmp`、程序所在目录、当前工作目录。可用 `--config <路径>` 指定独立配置；当用户目录本身只读时，这也是推荐的替代方案。
+
+也可直接运行 `./build/easy_git`，点击 **Browse...** 浏览并选择文件夹，再点击 **Open repository**；也支持手动输入路径。取消浏览会保留原路径。文件夹浏览在 Linux 使用系统 Zenity 选择器，在 Windows 使用系统原生文件夹对话框；不可用时均保留手动输入入口。可打开仓库子目录，操作会自动定位至仓库根目录。
 
 ImGui 固定为 `v1.92.5`，GLFW 固定为 `3.4`，首次配置时由 CMake 下载并校验 SHA-256。离线构建可通过 `FETCHCONTENT_SOURCE_DIR_IMGUI`、`FETCHCONTENT_SOURCE_DIR_GLFW` 指定本地源码；也支持 `.deps/imgui-1.92.5` 和 `.deps/glfw-3.4`。
 
@@ -163,7 +197,7 @@ ImGui 固定为 `v1.92.5`，GLFW 固定为 `3.4`，首次配置时由 CMake 下�
 ctest --test-dir build --output-on-failure
 ```
 
-测试只在 `/tmp` 创建临时仓库。`git_workflow` 验证空仓库、中文/空格/换行路径、字面量参数、部分暂存、提交、重命名、合并图、多父提交布局、分页、Detached HEAD、Stash、本地远程推拉，以及根提交/合并提交/删除/二进制文件的文件列表和单文件 Diff，以及文件历史的重命名跟随、删除／根提交、特殊路径、数量限制和合并历史。
+测试在系统临时目录中创建一次性仓库（Linux 为 `/tmp`，Windows 为 `%TEMP%`；不可写时依次回退到 `%LOCALAPPDATA%\easy_git\tmp`、构建目录和当前工作目录）。Windows 上按平台跳过依赖 POSIX 行为的检查：符号链接处理、`:(glob)` 魔法路径、文件名中的换行，以及依赖 IANA 时区库的时区矩阵；`core.autocrlf` 则通过正常的按行暂存与丢弃路径覆盖。`git_workflow` 验证空仓库、中文/空格/换行路径、字面量参数、部分暂存、提交、重命名、合并图、多父提交布局、分页、Detached HEAD、Stash、本地远程推拉，以及根提交/合并提交/删除/二进制文件的文件列表和单文件 Diff，以及文件历史的重命名跟随、删除／根提交、特殊路径、数量限制和合并历史。
 
 `git_operations` 验证 Cherry-pick / Merge / Revert、合并提交主线选择、三种 Reset、应用提交中单个文件的 Diff 并保留暂存区、Stash 只读预览与未跟踪文件、恢复暂存状态、过期删除保护，以及真实冲突的继续、中止和跳过、外部 Rebase 中止、独立 Worktree 的操作状态，以及 Discard 对部分暂存、删除、重命名、特殊路径、符号链接和过期状态的处理，以及批量 Discard 的整组选中文件检查和暂存内容保留。
 
@@ -181,13 +215,23 @@ cmake --build build-core
 ctest --test-dir build-core --output-on-failure
 ```
 
-可选图形烟雾检查（需要 `xvfb`、`xauth`）：
+可选图形烟雾检查。Linux 下需 `xvfb`、`xauth`：
 
 ```sh
 xvfb-run -a -s '-screen 0 1440x900x24' \
   ./build/easy_git /你的仓库 --config /tmp/easy-git-smoke.json \
   --frames 30 --screenshot /tmp/easy-git.ppm
 ```
+
+Windows 下同样使用这些参数，直接在桌面会话中运行并输出 PPM。由于命令行宿主不会等待 GUI 程序结束，需显式等待，否则命令返回时文件可能还没生成：
+
+```powershell
+Start-Process -FilePath .\build\easy_git.exe `
+  -ArgumentList 'C:\路径\你的仓库','--config',"$env:TEMP\easy-git-smoke.json",'--frames','30','--screenshot',"$env:TEMP\easy-git.ppm" `
+  -Wait
+```
+
+Windows 上该检查需要可交互的桌面会话和 OpenGL 3.3 驱动，渲染期间会短暂显示窗口。
 
 `docs/` 的截图来自真实临时测试仓库。按区块操作已用真实鼠标验证：暂存一个区块、确认丢弃另一区块并保留暂存内容，再取消暂存第一个区块并保留工作区改动。新版界面已用实际鼠标、键盘检查多仓库切换、草稿保留、单文件暂存、提交文件列表与 Diff、Path / Tree 切换及 1080×720 布局。Git 操作界面另验证了 Local / Remote / Stash 折叠、Stash 预览与 Apply / Delete、Cherry-pick 和 Hard Reset 的勾选保护及执行。新增分支定位检查使用 341 个提交验证跨页跳转及 Remote 定位；Discard 检查验证取消、确认及保留暂存内容；另用真实 Ctrl / Shift 按键和鼠标验证多选、Tree 折叠范围、批量暂存/丢弃及窄窗口工具栏。主题/AI 界面已验证中文生成结果填入、浅色与深色切换、设置编辑保存和重启后当前仓库恢复。窗口尺寸另经 Xvfb 实测：调整为 1220 × 780 后自动保存宽高，重启恢复相同尺寸；不保存窗口位置或分栏布局。
 
@@ -199,7 +243,8 @@ xvfb-run -a python3 tests/icon_smoke.py build/easy_git
 
 ## 当前边界
 
-- 当前仅支持 Linux / X11（Wayland 桌面可通过 XWayland 运行），最低窗口尺寸为 1080×720；未实现 Windows/macOS 进程后端。
+- 支持 Linux（X11）与 Windows 10/11（x64），最低窗口尺寸为 1080×720；Wayland 桌面可通过 XWayland 运行，未实现 macOS 进程后端。
+- Windows 版为免安装目录形式：CMake 的 `install`/`CPack` 目标、`.desktop` 启动入口和图标注册仍仅适用于 Linux，工具链生成的 DLL 需与程序放在同一目录或加入 `PATH`。
 - 合并提交展示相对第一父提交的 Diff；工作区支持整文件及按行／区块暂存、取消暂存和丢弃；尚无交互式 Rebase 编辑器或拖拽提交。二进制冲突仅支持选用完整版本，符号链接和子模块冲突需在外部处理。
 - 窗口尺寸、仓库、当前仓库、主题和 AI 设置持久化；提交草稿、文件选择和面板布局仅保留在当前会话，退出后不恢复；当前仓库约每秒静默检查本地变化，外部文件保存／删除及暂存内容变化会更新对应工作区 Diff，仅在 Diff 变化时清除旧行选区；Commit／Stash 预览固定在所选版本，未暂存修改不替换已暂存预览，也可手动 Refresh 立即重载。Clone、初始化、删除分支及带 lease 的强制推送已提供界面入口。
 - 单次 Git 命令超时 120 秒，输出预览上限 8 MiB。超限时明确报错，不显示不完整的仓库结构。
@@ -209,7 +254,7 @@ xvfb-run -a python3 tests/icon_smoke.py build/easy_git
 
 ## 参与贡献
 
-欢迎提交 [Issue](https://github.com/NickCyrusss/easy_git/issues) 或 Pull Request。报告问题时请提供 Linux 发行版、复现步骤和相关错误信息；不要附带 API Key、个人配置文件或私有仓库内容。修改 Git 操作、配置或 AI 请求后，请运行相关测试，并说明界面改动的验证方式。
+欢迎提交 [Issue](https://github.com/NickCyrusss/easy_git/issues) 或 Pull Request。报告问题时请提供系统版本（Linux 发行版或 Windows 版本）、复现步骤和相关错误信息；不要附带 API Key、个人配置文件或私有仓库内容。修改 Git 操作、配置或 AI 请求后，请运行相关测试，并说明界面改动的验证方式。
 
 ## 许可证与致谢
 

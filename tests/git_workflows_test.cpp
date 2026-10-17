@@ -1,10 +1,10 @@
 #include "git.h"
+#include "fs_helpers.h"
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <sstream>
 #include <stdexcept>
-#include <unistd.h>
 namespace fs = std::filesystem;
 void require(bool b,const char* text) { if (!b) throw std::runtime_error(text); }
 template<class F> void rejects(F f) { bool failed=false; try { f(); } catch (const std::exception&) { failed=true; } require(failed,"Expected rejection"); }
@@ -17,9 +17,9 @@ std::vector<int> changes(const std::string& patch,const std::string& match = {})
         else if (hunk && !line.empty() && (line[0]=='+' || line[0]=='-') && (match.empty() || line.substr(1)==match)) out.push_back(i);
     } return out;
 }
-eg::File file(const eg::Git& git,const std::string& path) { for (auto f:git.load().files) if(f.path==path) return f; throw std::runtime_error("File missing"); }
+eg::File file(const eg::Git& git,const std::string& path) { for (auto f:git.load().files) if(f.path==path) return f; throw std::runtime_error("File missing from status: " + path); }
 int main() {
-    char pattern[]="/tmp/easy-git-workflows-XXXXXX"; auto* dir=mkdtemp(pattern); if(!dir) return 1; fs::path root(dir), repo=root/"repo";
+    fs::path root = eg::make_test_directory("easy-git-workflows-"), repo=root/"repo";
     try {
         eg::Git::initialize(repo.string(),"main"); eg::Git git(repo.string());
         git.checked({"config","user.name","Workflow Test"}); git.checked({"config","user.email","test@example.invalid"}); git.checked({"config","commit.gpgsign","false"});
@@ -59,7 +59,7 @@ int main() {
         git.stage_lines(f,false,patch,selection); auto expected=many; expected.replace(expected.find("line 28\n"),8,"LAST\n");
         require(git.checked({"show",":hunks.txt"})==expected,"Later hunk coordinates were wrong");
         // New/deleted files, unusual names, no final newline, and an unborn branch.
-        const std::string name="新 file\n[1].txt"; write(repo/name,"alpha\nbeta"); f=file(git,name); patch=git.diff(f,false);
+        const std::string name=std::string("新 file")+eg::unusual_name_separator+"[1].txt"; write(repo/name,"alpha\nbeta"); f=file(git,name); patch=git.diff(f,false);
         git.stage_lines(f,false,patch,changes(patch,"beta")); require(git.checked({"show",":"+name})=="beta","New file/EOF partial stage failed");
         f=file(git,name); patch=git.diff(f,true); git.stage_lines(f,true,patch,changes(patch)); require(git.checked({"ls-files","--stage","--",name}).empty(),"Unstage new file left index entry");
         git.stage({name}); git.commit("new file"); fs::remove(repo/name); f=file(git,name); patch=git.diff(f,false);
@@ -96,7 +96,7 @@ int main() {
         write(repo/"discard.txt",staged); fs::remove(repo/"discard.txt");
         f=file(git,"discard.txt"); patch=git.diff(f,false); git.discard_lines(f,patch,changes(patch,"line 28"));
         require(read(repo/"discard.txt")=="line 28\n" && git.checked({"write-tree"})==tree,"Partial restore of deleted file failed");
-        const std::string loose="loose 新\n[1].txt"; write(repo/loose,"first\nsecond");
+        const std::string loose=std::string("loose 新")+eg::unusual_name_separator+"[1].txt"; write(repo/loose,"first\nsecond");
         f=file(git,loose); patch=git.diff(f,false); git.discard_lines(f,patch,changes(patch,"first"));
         require(read(repo/loose)=="second","Discard untracked line failed");
         f=file(git,loose); patch=git.diff(f,false); git.discard_lines(f,patch,changes(patch));
@@ -106,8 +106,11 @@ int main() {
         write(repo/"discard.txt",std::string("a\0b",3)); f=file(git,"discard.txt");
         rejects([&]{git.discard_lines(f,git.diff(f,false),{0});});
         require(read(repo/"discard.txt")==std::string("a\0b",3),"Binary discard modified file");
+#ifndef _WIN32
+        // Win32 symlinks need a privilege this environment may not hold.
         fs::remove(repo/"discard.txt"); fs::create_symlink("file.txt",repo/"discard.txt"); f=file(git,"discard.txt");
         rejects([&]{git.discard_lines(f,git.diff(f,false),{0});}); fs::remove(repo/"discard.txt");
+#endif
         git.checked({"reset","--hard","HEAD"});
         git.checked({"switch","-c","side"}); write(repo/"file.txt","theirs\n"); git.stage({"file.txt"}); git.commit("theirs");
         git.checked({"switch","main"}); write(repo/"file.txt","ours\n"); git.stage({"file.txt"}); git.commit("ours");
@@ -173,6 +176,6 @@ int main() {
         git.checked({"switch","--detach"}); rejects([&]{git.push();});
         git.checked({"switch","-c","without-origin"}); git.checked({"remote","remove","origin"}); rejects([&]{git.push();});
         std::cout<<"PASS: partial staging/unstaging, conflict editor, init/clone, branch deletion, force-with-lease\n";
-        fs::remove_all(root); return 0;
+        eg::remove_tree(root); return 0;
     } catch(const std::exception& e) { std::cerr<<"FAIL: "<<e.what()<<"\nFixture: "<<root<<'\n'; return 1; }
 }

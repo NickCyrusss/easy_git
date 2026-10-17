@@ -1,4 +1,5 @@
 #include "app_services.h"
+#include "fs_helpers.h"
 #include <json-c/json.h>
 #include <algorithm>
 #include <filesystem>
@@ -6,13 +7,28 @@
 #include <future>
 #include <iostream>
 #include <functional>
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
 #include <poll.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#endif
 
 namespace fs = std::filesystem;
+// The mock endpoint below needs the same socket calls on both platforms.
+#ifdef _WIN32
+using socket_length = int;
+constexpr int no_signal = 0;
+void close_socket(int socket) { closesocket(socket); }
+#else
+using socket_length = socklen_t;
+constexpr int no_signal = MSG_NOSIGNAL;
+void close_socket(int socket) { close(socket); }
+#endif
 void require(bool ok,const char* message) { if (!ok) throw std::runtime_error(message); }
 template<class F> void rejects(F action,const char* message) {
     bool failed = false; try { action(); } catch (const std::exception&) { failed = true; } require(failed,message);
@@ -21,15 +37,20 @@ std::string read(const fs::path& file) { std::ifstream in(file); return {std::is
 struct Server {
     int fd = -1; std::string url; std::future<std::string> request;
     Server(std::string response,int status = 200,std::function<void()> before_reply = {}) {
-        fd = socket(AF_INET,SOCK_STREAM,0); require(fd >= 0,"Cannot create local mock HTTP socket");
-        sockaddr_in addr{}; addr.sin_family = AF_INET; addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        fd = int(socket(AF_INET,SOCK_STREAM,0)); require(fd >= 0,"Cannot create local mock HTTP socket");
+        sockaddr_in addr{}; addr.sin_family = AF_INET; addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK); addr.sin_port = 0;
         require(bind(fd,reinterpret_cast<sockaddr*>(&addr),sizeof(addr)) == 0 && listen(fd,1) == 0,"Cannot bind mock HTTP server");
-        socklen_t length = sizeof(addr); getsockname(fd,reinterpret_cast<sockaddr*>(&addr),&length);
+        socket_length length = sizeof(addr); getsockname(fd,reinterpret_cast<sockaddr*>(&addr),&length);
         url = "http://127.0.0.1:" + std::to_string(ntohs(addr.sin_port)) + "/v1";
         request = std::async(std::launch::async,[this,response,status,before_reply] {
+#ifdef _WIN32
+            fd_set readable; FD_ZERO(&readable); FD_SET(SOCKET(fd),&readable); timeval wait{5,0};
+            require(select(fd+1,&readable,nullptr,nullptr,&wait) > 0,"No HTTP request received");
+#else
             pollfd p{fd,POLLIN,0}; require(poll(&p,1,5000) > 0,"No HTTP request received");
-            int client = accept(fd,nullptr,nullptr); require(client >= 0,"Mock accept failed");
-            timeval timeout{5,0}; setsockopt(client,SOL_SOCKET,SO_RCVTIMEO,&timeout,sizeof(timeout));
+#endif
+            int client = int(accept(fd,nullptr,nullptr)); require(client >= 0,"Mock accept failed");
+            timeval timeout{5,0}; setsockopt(client,SOL_SOCKET,SO_RCVTIMEO,reinterpret_cast<const char*>(&timeout),sizeof(timeout));
             std::string data; char buf[4096]; size_t body_at = std::string::npos,bytes = 0;
             for (;;) {
                 auto n = recv(client,buf,sizeof(buf),0); if (n <= 0) break; data.append(buf,size_t(n));
@@ -44,15 +65,20 @@ struct Server {
             }
             if (before_reply) before_reply();
             auto wire = "HTTP/1.1 " + std::to_string(status) + " Result\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: " + std::to_string(response.size()) + "\r\n\r\n" + response;
-            size_t sent = 0; while (sent < wire.size()) { auto n = send(client,wire.data()+sent,wire.size()-sent,MSG_NOSIGNAL); if (n <= 0) break; sent += size_t(n); }
-            close(client); return data;
+            size_t sent = 0; while (sent < wire.size()) { auto n = send(client,wire.data()+sent,int(wire.size()-sent),no_signal); if (n <= 0) break; sent += size_t(n); }
+            close_socket(client); return data;
         });
     }
-    ~Server() { if (request.valid()) request.wait(); if (fd >= 0) close(fd); }
+    ~Server() { if (request.valid()) request.wait(); if (fd >= 0) close_socket(fd); }
 };
 int main() {
+#ifdef _WIN32
+    WSADATA winsock{}; if (WSAStartup(MAKEWORD(2,2),&winsock) != 0) return 1;
+    fs::path root = eg::make_test_directory("easy-git-services-"), config = root / ".easy_git";
+#else
     char pattern[] = "/tmp/easy-git-services-XXXXXX"; char* temp = mkdtemp(pattern); if (!temp) return 1;
     fs::path root(temp), config = root / ".easy_git";
+#endif
     try {
         eg::Settings settings; settings.light = true; settings.ai.api_key = "test-secret";
         require(settings.window.width == 1440 && settings.window.height == 900,"Default window size changed");
@@ -65,7 +91,12 @@ int main() {
         require(json_object_object_length(json_object_object_get(saved_json,"window")) == 2 &&
             !json_object_object_get(saved_json,"layout") && !json_object_object_get(saved_json,"repository_layouts"),"Window settings saved position/state or layout");
         json_object_put(saved_json);
+#ifdef _WIN32
+        // Windows expresses access through ACLs, so only the file itself is checked here.
+        require(fs::is_regular_file(config),"Settings file missing");
+#else
         struct stat info{}; stat(config.c_str(),&info); require((info.st_mode & 0777) == 0600,"Settings permissions are not 0600");
+#endif
         settings.repositories.erase(settings.repositories.begin()); settings.ai.model = "edited-model";
         eg::write_settings(config.string(),settings);
         require(eg::read_settings(config.string()).repositories.size() == 1 && read(config).find("edited-model") != std::string::npos,"Settings were appended rather than replaced");
@@ -246,6 +277,9 @@ int main() {
         std::ofstream(root / "code.txt") << std::string(2048,'x'); git.checked({"add","code.txt"});
         rejects([&] { eg::generate_commit_message(git,ai); },"Oversized diff was sent");
         std::cout << "PASS: atomic settings/0600, provider switching/restart/legacy migration, real HTTP JSON/auth, staged-only payload, error handling and stale index protection\n";
-        fs::remove_all(root); return 0;
+#ifdef _WIN32
+        WSACleanup();
+#endif
+        eg::remove_tree(root); return 0;
     } catch (const std::exception& e) { std::cerr << "FAIL: " << e.what() << "\nFixture: " << root << '\n'; return 1; }
 }

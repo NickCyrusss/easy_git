@@ -4,8 +4,13 @@
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
 #include <GLFW/glfw3.h>
+#ifdef _WIN32
+#define GLFW_EXPOSE_NATIVE_WIN32
+#include <GLFW/glfw3native.h>
+#endif
 #include <algorithm>
 #include <array>
+#include <iterator>
 #include <map>
 #include <set>
 #include <chrono>
@@ -17,8 +22,14 @@
 #include <future>
 #include <sstream>
 #include <stdexcept>
-#include <sys/stat.h>
 #include <ctime>
+#ifdef _WIN32
+#include <windows.h>
+#include <shellapi.h>
+#include <shobjidl.h>
+#else
+#include <sys/stat.h>
+#endif
 
 namespace {
 namespace fs = std::filesystem;
@@ -30,16 +41,119 @@ bool light_theme = false;
 ImFont* body_font = nullptr;
 ImFont* mono_font = nullptr;
 
+// Git prints ISO-8601 with a numeric zone; the CRT date helpers differ per
+// platform, so the instant is assembled from the parsed fields instead.
+std::time_t utc_seconds(std::tm& broken_down) {
+#ifdef _WIN32
+    return _mkgmtime(&broken_down);
+#else
+    return timegm(&broken_down);
+#endif
+}
+bool broken_down_local(std::time_t instant, std::tm& result) {
+#ifdef _WIN32
+    return localtime_s(&result, &instant) == 0;
+#else
+    return localtime_r(&instant, &result) != nullptr;
+#endif
+}
 std::string local_commit_time(const std::string& date) {
+    int year = 0, month = 0, day = 0, hour = 0, minute = 0, second = 0;
+    if (std::sscanf(date.c_str(), "%d-%d-%dT%d:%d:%d", &year, &month, &day, &hour, &minute, &second) != 6)
+        return date;
+    if (year < 1900 || month < 1 || month > 12 || day < 1 || day > 31) return date;
+    long offset = 0;
+    if (date.size() > 19 && (date[19] == '+' || date[19] == '-')) {
+        int zone_hours = 0, zone_minutes = 0;
+        if (std::sscanf(date.c_str() + 20, "%2d:%2d", &zone_hours, &zone_minutes) != 2 &&
+            std::sscanf(date.c_str() + 20, "%2d%2d", &zone_hours, &zone_minutes) != 2)
+            return date;
+        offset = long(zone_hours) * 3600 + long(zone_minutes) * 60;
+        if (date[19] == '-') offset = -offset;
+    } else if (date.size() > 19 && date[19] != 'Z') {
+        return date;
+    }
     std::tm parsed{};
-    const char* end = strptime(date.c_str(),"%Y-%m-%dT%H:%M:%S%z",&parsed);
-    if (!end || *end) return date;
-    auto offset = parsed.tm_gmtoff;
-    std::time_t instant = timegm(&parsed)-offset;
+    parsed.tm_year = year - 1900; parsed.tm_mon = month - 1; parsed.tm_mday = day;
+    parsed.tm_hour = hour; parsed.tm_min = minute; parsed.tm_sec = second; parsed.tm_isdst = 0;
+    std::time_t instant = utc_seconds(parsed) - offset;
     std::tm local{}; char result[96];
-    if (!localtime_r(&instant,&local) || !std::strftime(result,sizeof(result),"%Y-%m-%d %H:%M:%S %Z",&local)) return date;
+    if (!broken_down_local(instant, local) || !std::strftime(result, sizeof(result), "%Y-%m-%d %H:%M:%S %Z", &local))
+        return date;
     return result;
 }
+
+#ifdef _WIN32
+HWND main_window = nullptr;
+std::wstring widen(const std::string& text) {
+    if (text.empty()) return {};
+    int need = MultiByteToWideChar(CP_UTF8, 0, text.data(), int(text.size()), nullptr, 0);
+    std::wstring out(size_t(std::max(need, 0)), L'\0');
+    if (need > 0) MultiByteToWideChar(CP_UTF8, 0, text.data(), int(text.size()), out.data(), need);
+    return out;
+}
+std::string narrow(const std::wstring& text) {
+    if (text.empty()) return {};
+    int need = WideCharToMultiByte(CP_UTF8, 0, text.data(), int(text.size()), nullptr, 0, nullptr, nullptr);
+    std::string out(size_t(std::max(need, 0)), '\0');
+    if (need > 0) WideCharToMultiByte(CP_UTF8, 0, text.data(), int(text.size()), out.data(), need, nullptr, nullptr);
+    return out;
+}
+// The folder picker runs on the job thread, so COM is initialised there and the
+// dialog is owned by the GLFW window to stay above it.
+std::string browse_for_folder(const std::string& start, const std::shared_ptr<std::atomic_bool>&) {
+    HRESULT initialized = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+    bool uninitialize = SUCCEEDED(initialized);
+    if (FAILED(initialized) && initialized != RPC_E_CHANGED_MODE && initialized != S_FALSE)
+        throw std::runtime_error("Cannot start the Windows folder picker.");
+    std::string chosen_path;
+    IFileOpenDialog* dialog = nullptr;
+    if (SUCCEEDED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_IFileOpenDialog,
+                                   reinterpret_cast<void**>(&dialog)))) {
+        DWORD options = 0;
+        if (SUCCEEDED(dialog->GetOptions(&options)))
+            dialog->SetOptions(options | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST);
+        if (!start.empty()) {
+            IShellItem* folder = nullptr;
+            if (SUCCEEDED(SHCreateItemFromParsingName(widen(start).c_str(), nullptr, IID_IShellItem,
+                                                      reinterpret_cast<void**>(&folder)))) {
+                dialog->SetFolder(folder);
+                folder->Release();
+            }
+        }
+        if (SUCCEEDED(dialog->Show(main_window))) {
+            IShellItem* result = nullptr;
+            if (SUCCEEDED(dialog->GetResult(&result))) {
+                PWSTR raw = nullptr;
+                if (SUCCEEDED(result->GetDisplayName(SIGDN_FILESYSPATH, &raw)) && raw) {
+                    chosen_path = narrow(raw);
+                    CoTaskMemFree(raw);
+                }
+                result->Release();
+            }
+        }
+        dialog->Release();
+    }
+    if (uninitialize) CoUninitialize();
+    return chosen_path;
+}
+#else
+// Zenity is the folder picker on Linux desktops.
+std::string browse_for_folder(const std::string& start, const std::shared_ptr<std::atomic_bool>& stop) {
+    std::vector<std::string> args = {"zenity", "--file-selection", "--directory",
+        "--title=Select repository folder"};
+    std::error_code ec;
+    if (!start.empty() && fs::is_directory(start, ec))
+        args.push_back("--filename=" + fs::absolute(start).string() + "/");
+    auto selected = eg::run_process(std::move(args), stop, 0);
+    if (selected.code == 1) return {};
+    if (selected.code || selected.truncated)
+        throw std::runtime_error(selected.error.empty() ? "Folder selection failed." : selected.error);
+    // Zenity appends one newline; preserve any newlines in the folder name itself.
+    if (!selected.out.empty() && selected.out.back() == '\n') selected.out.pop_back();
+    return selected.out;
+}
+#endif
 
 void label(const char* text) { ImGui::TextColored(muted, "%s", text); }
 bool button(const char* text, bool enabled = true, ImVec2 size = {}) {
@@ -419,27 +533,20 @@ struct RepoTab {
         launch("Choose a repository folder...", [start, stop] {
             JobResult r; r.folder_selection = true;
             try {
-                std::vector<std::string> args = {"zenity", "--file-selection", "--directory",
-                    "--title=Select repository folder"};
+                auto selected_path = browse_for_folder(start, stop);
                 std::error_code ec;
-                if (!start.empty() && fs::is_directory(start, ec))
-                    args.push_back("--filename=" + fs::absolute(start).string() + "/");
-                auto selected = eg::run_process(std::move(args), stop, 0);
-                if (selected.code == 1) r.message = "Folder selection cancelled";
-                else if (selected.code || selected.truncated)
-                    throw std::runtime_error(selected.error.empty() ? "Folder selection failed." : selected.error);
-                else {
-                    // Zenity appends one newline; preserve any newlines in the folder name itself.
-                    if (!selected.out.empty() && selected.out.back() == '\n') selected.out.pop_back();
-                    if (selected.out.empty() || selected.out.size() >= sizeof(RepoTab::path) ||
-                        selected.out.find('\0') != std::string::npos || !fs::is_directory(selected.out, ec))
+                if (selected_path.empty()) {
+                    r.message = "Folder selection cancelled";
+                } else {
+                    if (selected_path.size() >= sizeof(RepoTab::path) ||
+                        selected_path.find('\0') != std::string::npos || !fs::is_directory(selected_path, ec))
                         throw std::runtime_error("The selected folder is unavailable or its path is too long.");
-                    r.folder = std::move(selected.out);
+                    r.folder = std::move(selected_path);
                     r.message = "Folder selected. Click Open repository to continue.";
                 }
             } catch (const std::exception& e) {
                 r.error = std::string("Could not browse folders: ") + e.what() +
-                    "\nEnsure Zenity is installed, or enter the repository path manually.";
+                    "\nEnter the repository path manually instead.";
             }
             return r;
         });
@@ -629,11 +736,28 @@ struct RepoTab {
         previewing = true;
     }
     std::string file_stamp() const {
+        fs::path path = fs::path(repo.root)/selected_file;
+#ifdef _WIN32
+        // The file index changes when an editor saves through rename, which is what
+        // makes an atomic replacement visible even when size and time look equal.
+        HANDLE handle = CreateFileW(path.c_str(),FILE_READ_ATTRIBUTES,
+            FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,nullptr,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,nullptr);
+        if (handle == INVALID_HANDLE_VALUE) return {};
+        BY_HANDLE_FILE_INFORMATION info{};
+        bool ok = GetFileInformationByHandle(handle,&info) != 0;
+        CloseHandle(handle);
+        if (!ok) return {};
+        return std::to_string(info.dwVolumeSerialNumber)+":"+std::to_string(info.nFileIndexHigh)+":"+
+            std::to_string(info.nFileIndexLow)+":"+std::to_string(info.nFileSizeHigh)+":"+
+            std::to_string(info.nFileSizeLow)+":"+std::to_string(info.ftLastWriteTime.dwHighDateTime)+":"+
+            std::to_string(info.ftLastWriteTime.dwLowDateTime);
+#else
         struct stat info{};
-        if (stat((fs::path(repo.root)/selected_file).c_str(),&info) != 0) return {};
+        if (stat(path.c_str(),&info) != 0) return {};
         return std::to_string(info.st_dev)+":"+std::to_string(info.st_ino)+":"+std::to_string(info.st_size)+":"+
             std::to_string(info.st_mtim.tv_sec)+":"+std::to_string(info.st_mtim.tv_nsec)+":"+
             std::to_string(info.st_ctim.tv_sec)+":"+std::to_string(info.st_ctim.tv_nsec);
+#endif
     }
     void silent_fetch(double now) {
         if (!ready() || conflict_open || history_open || !pending_kind.empty() || !error.empty()) return;
@@ -2101,16 +2225,45 @@ void save_frame(const char* path, int w, int h) {
 
 #ifndef EASY_GIT_UI_TEST
 #include "app_icon.h"
+#ifdef _WIN32
+// The Windows build is a GUI-subsystem binary, so no console is created when the
+// executable is double-clicked. When it is started from cmd or PowerShell, attach
+// to that console instead of allocating a new one, keeping --help and diagnostics
+// visible without bringing the console window back for normal launches.
+void attach_parent_console() {
+    if (GetConsoleWindow()) return;
+    if (!AttachConsole(ATTACH_PARENT_PROCESS)) return;
+    // An inherited handle means the caller redirected that stream to a file or a
+    // pipe; leave it alone and only reconnect the streams that have none.
+    FILE* stream = nullptr;
+    if (!GetStdHandle(STD_OUTPUT_HANDLE)) { stream = freopen("CONOUT$", "w", stdout); (void)stream; }
+    if (!GetStdHandle(STD_ERROR_HANDLE)) { stream = freopen("CONOUT$", "w", stderr); (void)stream; }
+    if (!GetStdHandle(STD_INPUT_HANDLE)) { stream = freopen("CONIN$", "r", stdin); (void)stream; }
+}
+#endif
 int main(int argc, char** argv) {
+#ifdef _WIN32
+    attach_parent_console();
+#endif
+    // Every path inside the app is UTF-8. The Windows CRT hands argv over in the
+    // ANSI code page, so the wide command line is re-read and converted instead.
+    std::vector<std::string> arguments;
+#ifdef _WIN32
+    if (LPWSTR* wide = CommandLineToArgvW(GetCommandLineW(),&argc))
+        for (int i = 0; i < argc; ++i) arguments.push_back(narrow(wide[i]));
+    if (arguments.empty()) return 1;
+#else
+    for (int i = 0; i < argc; ++i) arguments.emplace_back(argv[i]);
+#endif
     std::vector<std::string> roots; std::string screenshot, config_file; int frames = 0;
-    for (int i = 1; i < argc; ++i) {
-        std::string arg = argv[i];
+    for (int i = 1; i < int(arguments.size()); ++i) {
+        const std::string& arg = arguments[size_t(i)];
         if (arg == "--help") {
             puts("easy_git [repository ...] [--config file] [--frames N] [--screenshot image.ppm]\nSettings and open repositories are saved in ~/.easy_git by default.\nF5 refreshes the repository. Drag panel dividers to resize."); return 0;
         }
-        if (arg == "--frames" && i+1 < argc) frames = std::max(1,atoi(argv[++i]));
-        else if (arg == "--screenshot" && i+1 < argc) screenshot = argv[++i];
-        else if (arg == "--config" && i+1 < argc) config_file = argv[++i];
+        if (arg == "--frames" && i+1 < int(arguments.size())) frames = std::max(1,atoi(arguments[size_t(++i)].c_str()));
+        else if (arg == "--screenshot" && i+1 < int(arguments.size())) screenshot = arguments[size_t(++i)];
+        else if (arg == "--config" && i+1 < int(arguments.size())) config_file = arguments[size_t(++i)];
         else roots.push_back(fs::absolute(arg).string());
     }
     glfwSetErrorCallback([](int code,const char* description) { fprintf(stderr,"GLFW %d: %s\n",code,description); });
@@ -2118,23 +2271,52 @@ int main(int argc, char** argv) {
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR,3); glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR,3);
     glfwWindowHint(GLFW_OPENGL_PROFILE,GLFW_OPENGL_CORE_PROFILE);
     glfwWindowHint(GLFW_VISIBLE,GLFW_FALSE);
+#ifndef _WIN32
     glfwWindowHintString(GLFW_X11_CLASS_NAME,"easy_git");
     glfwWindowHintString(GLFW_X11_INSTANCE_NAME,"easy_git");
+#endif
     auto* window = glfwCreateWindow(1440,900,"Easy Git - repository workspace",nullptr,nullptr);
     if (!window) { glfwTerminate(); return 1; }
+#ifdef _WIN32
+    main_window = glfwGetWin32Window(window);
+#endif
     GLFWimage icon{64,64,app_icon_pixels};
     glfwSetWindowIcon(window,1,&icon);
     glfwMakeContextCurrent(window); glfwSwapInterval(1);
     IMGUI_CHECKVERSION(); ImGui::CreateContext(); theme();
     auto& io = ImGui::GetIO(); io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard; io.IniFilename = nullptr;
-    const char* body = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf";
-    body_font = fs::exists(body) ? io.Fonts->AddFontFromFileTTF(body,16) : io.Fonts->AddFontDefault();
-    const char* cjk = "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc";
-    if (fs::exists(cjk)) { ImFontConfig config; config.MergeMode = true; io.Fonts->AddFontFromFileTTF(cjk,16,&config); }
-    const char* mono = "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf";
-    mono_font = fs::exists(mono) ? io.Fonts->AddFontFromFileTTF(mono,13) : body_font;
-    if (mono_font != body_font && fs::exists(cjk)) {
-        ImFontConfig config; config.MergeMode = true; io.Fonts->AddFontFromFileTTF(cjk,13,&config);
+    // Each platform ships its UI font family in a different place; use the first
+    // one that exists and keep ImGui's built-in font as the last resort.
+#ifdef _WIN32
+    const char* body_candidates[] = {"C:/Windows/Fonts/segoeui.ttf","C:/Windows/Fonts/arial.ttf"};
+    const char* cjk_candidates[] = {"C:/Windows/Fonts/msyh.ttc","C:/Windows/Fonts/simhei.ttf","C:/Windows/Fonts/simsun.ttc"};
+    const char* mono_candidates[] = {"C:/Windows/Fonts/consola.ttf","C:/Windows/Fonts/cour.ttf"};
+#else
+    const char* body_candidates[] = {"/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"};
+    const char* cjk_candidates[] = {"/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"};
+    const char* mono_candidates[] = {"/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"};
+#endif
+    std::error_code font_ec;
+    auto first_existing = [&](const char* const* names, size_t count) -> const char* {
+        for (size_t i = 0; i < count; ++i) if (fs::exists(names[i],font_ec)) return names[i];
+        return nullptr;
+    };
+    const char* body = first_existing(body_candidates,std::size(body_candidates));
+    const char* cjk = first_existing(cjk_candidates,std::size(cjk_candidates));
+    const char* mono = first_existing(mono_candidates,std::size(mono_candidates));
+    body_font = body ? io.Fonts->AddFontFromFileTTF(body,16) : io.Fonts->AddFontDefault();
+    ImVector<ImWchar> cjk_ranges;
+    if (cjk) {
+        ImFontGlyphRangesBuilder builder;
+        builder.AddRanges(io.Fonts->GetGlyphRangesDefault());
+        builder.AddRanges(io.Fonts->GetGlyphRangesChineseSimplifiedCommon());
+        builder.BuildRanges(&cjk_ranges);
+    }
+    if (cjk) { ImFontConfig config; config.MergeMode = true; config.GlyphRanges = cjk_ranges.Data; io.Fonts->AddFontFromFileTTF(cjk,16,&config); }
+    mono_font = mono ? io.Fonts->AddFontFromFileTTF(mono,13) : body_font;
+    if (mono_font != body_font && cjk) {
+        ImFontConfig config; config.MergeMode = true; config.GlyphRanges = cjk_ranges.Data;
+        io.Fonts->AddFontFromFileTTF(cjk,13,&config);
     }
     ImGui_ImplGlfw_InitForOpenGL(window,true); ImGui_ImplOpenGL3_Init("#version 330");
     App app;

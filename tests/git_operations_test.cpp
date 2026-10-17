@@ -1,10 +1,10 @@
 #include "git.h"
+#include "fs_helpers.h"
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
-#include <unistd.h>
 
 namespace fs = std::filesystem;
 void require(bool ok, const char* message) { if (!ok) throw std::runtime_error(message); }
@@ -13,13 +13,11 @@ template<class F> void rejects(F action, const char* message) {
     try { action(); } catch (const std::exception&) { failed = true; }
     require(failed,message);
 }
-void write(const fs::path& path, const std::string& text) { std::ofstream(path) << text; }
-std::string read(const fs::path& path) { std::ifstream in(path); return {std::istreambuf_iterator<char>(in),{}}; }
+void write(const fs::path& path, const std::string& text) { std::ofstream(path, std::ios::binary) << text; }
+std::string read(const fs::path& path) { std::ifstream in(path, std::ios::binary); return {std::istreambuf_iterator<char>(in),{}}; }
 
 int main() {
-    char pattern[] = "/tmp/easy-git-operations-XXXXXX";
-    auto* temp = mkdtemp(pattern); if (!temp) return 1;
-    fs::path root(temp);
+    fs::path root = eg::make_test_directory("easy-git-operations-");
     try {
         eg::Git git(root.string());
         git.checked({"init","--initial-branch=main"});
@@ -59,13 +57,17 @@ int main() {
             read(root / "shared.txt") == "staged version\n" && git.checked({"write-tree"}) == saved_index,"Batch discard failed to preserve staged content");
         fs::remove(root / "shared.txt"); git.discard(changed("shared.txt"));
         require(read(root / "shared.txt") == "staged version\n","Discard did not restore a deleted file");
-        const std::string literal = "草稿\n[x] $(literal).txt";
+        const std::string literal = std::string("草稿") + eg::unusual_name_separator + "[x] $(literal).txt";
         write(root / literal,"delete only this file\n"); write(root / "keep.txt","keep\n");
         git.discard(changed(literal));
         require(!fs::exists(root / literal) && read(root / "keep.txt") == "keep\n","Untracked discard expanded path or removed another file");
+#ifndef _WIN32
+        // Creating a symlink on Windows needs a privilege this environment may not
+        // hold, so link-following behaviour is verified on POSIX.
         fs::create_symlink(root / "keep.txt",root / "link.txt");
         git.discard(changed("link.txt"));
         require(!fs::is_symlink(root / "link.txt") && read(root / "keep.txt") == "keep\n","Discard followed a symlink");
+#endif
         auto stale = changed("keep.txt"); git.checked({"add","keep.txt"});
         rejects([&] { git.discard(stale); },"Discard accepted stale untracked status");
         require(read(root / "keep.txt") == "keep\n","Stale discard removed newly staged file");
@@ -108,7 +110,7 @@ int main() {
         // Stash previews must include untracked paths without changing HEAD, index or worktree.
         write(root / "shared.txt","staged\n"); git.checked({"add","shared.txt"});
         write(root / "shared.txt","staged\nworking\n");
-        const std::string odd = "草稿\n[x].txt"; write(root / odd,"saved untracked\n");
+        const std::string odd = std::string("草稿") + eg::unusual_name_separator + "[x].txt"; write(root / odd,"saved untracked\n");
         git.save_stash("Preview one"); auto saved = git.load().stashes.at(0);
         require(saved.ref == "stash@{0}" && saved.subject.find("Preview one") != std::string::npos,"Stash metadata parse failed");
         write(root / "current.txt","untouched\n");
@@ -189,7 +191,7 @@ int main() {
         worktree.resolve_operation("cherry-pick","abort");
         git.checked({"worktree","remove",linked.string()});
         std::cout << "PASS: cherry-pick/merge/revert, mainline, reset modes, stash previews/apply/index/delete, conflicts/continue/abort/skip\n";
-        fs::remove_all(root); return 0;
+        eg::remove_tree(root); return 0;
     } catch (const std::exception& e) {
         std::cerr << "FAIL: " << e.what() << "\nFixture: " << root << '\n'; return 1;
     }

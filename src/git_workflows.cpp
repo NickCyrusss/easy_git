@@ -1,12 +1,11 @@
 #include "git.h"
+#include "fs_helpers.h"
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <set>
 #include <stdexcept>
-#include <sys/stat.h>
-#include <unistd.h>
 
 namespace eg {
 namespace {
@@ -26,6 +25,24 @@ std::string read_file(const fs::path& path) {
     if (!stream) throw std::runtime_error("Cannot read file.");
     return {std::istreambuf_iterator<char>(stream),{}};
 }
+// Git diffs the worktree in index form, so with core.autocrlf the text we compare
+// against has LF endings even when the file on disk uses CRLF.
+std::string strip_carriage_returns(const std::string& text) {
+    std::string out; out.reserve(text.size());
+    for (size_t i = 0; i < text.size(); ++i) {
+        if (text[i] == '\r' && i+1 < text.size() && text[i+1] == '\n') continue;
+        out.push_back(text[i]);
+    }
+    return out;
+}
+std::string restore_carriage_returns(const std::string& text) {
+    std::string out; out.reserve(text.size() + text.size()/16);
+    for (size_t i = 0; i < text.size(); ++i) {
+        if (text[i] == '\n' && (i == 0 || text[i-1] != '\r')) out.push_back('\r');
+        out.push_back(text[i]);
+    }
+    return out;
+}
 // Never follow a conflict path or its parents out of the working repository.
 fs::path regular_path(const std::string& root,const std::string& name) {
     fs::path rel(name), base = fs::canonical(root);
@@ -40,14 +57,15 @@ fs::path regular_path(const std::string& root,const std::string& name) {
 }
 struct TempFile {
     std::string path;
-    explicit TempFile(const std::string& text,std::string pattern = "/tmp/easy-git-content-XXXXXX") : path(std::move(pattern)) {
-        int fd = mkstemp(path.data()); if (fd < 0) throw std::runtime_error("Cannot create temporary file.");
-        size_t at = 0; bool ok = true;
-        while (at < text.size()) { auto n = write(fd,text.data()+at,text.size()-at); if (n <= 0) { ok = false; break; } at += size_t(n); }
-        if (close(fd) != 0) ok = false;
-        if (!ok) { unlink(path.c_str()); throw std::runtime_error("Cannot write temporary file."); }
+    // An empty directory means a writable scratch directory; callers that rename
+    // the file into the worktree pass that worktree directory instead.
+    explicit TempFile(const std::string& text,std::filesystem::path directory = {},
+                      std::string prefix = "easy-git-content-") {
+        if (directory.empty()) directory = scratch_directory();
+        if (directory.empty()) throw std::runtime_error("Cannot create temporary file.");
+        path = write_temporary_file(directory,std::move(prefix),text);
     }
-    ~TempFile() { unlink(path.c_str()); }
+    ~TempFile() { std::error_code ignored; fs::remove(path,ignored); }
 };
 struct Entry { std::string mode, oid; };
 Entry index_entry(const std::string& listing) {
@@ -198,7 +216,10 @@ void Git::discard_lines(const File& file,const std::string& preview,const std::v
     if (original.find('\0') != std::string::npos || preview.find("GIT binary patch") != std::string::npos)
         throw std::runtime_error("Discard binary files as a whole file.");
     if (diff(file,false) != preview) throw std::runtime_error("The diff changed. Review the file before discarding lines.");
-    auto result = selected_content(original,preview,selected,true);
+    const bool crlf = original.find("\r\n") != std::string::npos;
+    auto result = selected_content(crlf ? strip_carriage_returns(original) : original,preview,selected,true);
+    // The replacement lands in the worktree, so keep the file's own line endings.
+    if (crlf && !result.empty()) result = restore_carriage_returns(result);
     if (result.size() > 1024*1024) throw std::runtime_error("Partial discard supports files up to 1 MiB.");
     const bool remove = result.empty() && file.index == '?';
     auto unchanged = [&] {
@@ -210,11 +231,12 @@ void Git::discard_lines(const File& file,const std::string& preview,const std::v
     if (remove) { unchanged(); fs::remove(path); }
     else {
         fs::create_directories(path.parent_path());
-        TempFile temp(result,(path.parent_path()/".easy-git-discard-XXXXXX").string());
+        TempFile temp(result,path.parent_path(),".easy-git-discard-");
         auto permissions = exists ? fs::status(path).permissions() : fs::perms::owner_read | fs::perms::owner_write | fs::perms::group_read | fs::perms::others_read;
         if (!exists && entry.mode == "100755") permissions |= fs::perms::owner_exec | fs::perms::group_exec | fs::perms::others_exec;
         fs::permissions(temp.path,permissions);
-        unchanged(); fs::rename(temp.path,path);
+        unchanged();
+        if (!replace_file(temp.path,path)) throw std::runtime_error("Cannot replace the discarded file.");
     }
 }
 Conflict Git::read_conflict(const File& file) const {
@@ -252,9 +274,10 @@ void Git::save_resolution(const Conflict& c,const std::string& result,bool remov
     if (remove) { if (c.exists) fs::remove(path); }
     else {
         fs::create_directories(path.parent_path());
-        TempFile temp(result,(path.parent_path()/".easy-git-resolution-XXXXXX").string());
+        TempFile temp(result,path.parent_path(),".easy-git-resolution-");
         auto perms = c.exists ? fs::status(path).permissions() : fs::perms::owner_read | fs::perms::owner_write | fs::perms::group_read | fs::perms::others_read;
-        fs::permissions(temp.path,perms); fs::rename(temp.path,path);
+        fs::permissions(temp.path,perms);
+        if (!replace_file(temp.path,path)) throw std::runtime_error("Cannot replace the resolved file.");
     }
     checked({"add","-A","--",c.path});
 }

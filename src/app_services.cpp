@@ -1,4 +1,5 @@
 #include "app_services.h"
+#include "fs_helpers.h"
 #include <curl/curl.h>
 #include <json-c/json.h>
 #include <algorithm>
@@ -7,10 +8,14 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
-#include <pwd.h>
 #include <stdexcept>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <pwd.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#endif
 
 namespace eg {
 namespace {
@@ -193,11 +198,28 @@ void delete_ai_model(Settings& settings,const std::string& name) {
     if (!settings.ai_profiles.erase(removed)) throw std::runtime_error("AI model profile no longer exists.");
 }
 std::string default_settings_path() {
+#ifdef _WIN32
+    // getenv() yields ANSI bytes and a profile path may contain non-ASCII names,
+    // so the wide value is read and converted to UTF-8 explicitly.
+    constexpr DWORD capacity = 32768;
+    wchar_t buffer[capacity] = {};
+    DWORD length = GetEnvironmentVariableW(L"USERPROFILE", buffer, capacity);
+    if (!length || length >= capacity) throw std::runtime_error("Cannot locate the user's home directory.");
+    int need = WideCharToMultiByte(CP_UTF8, 0, buffer, int(length), nullptr, 0, nullptr, nullptr);
+    if (need <= 0) throw std::runtime_error("Cannot locate the user's home directory.");
+    std::string home(size_t(need), '\0');
+    WideCharToMultiByte(CP_UTF8, 0, buffer, int(length), home.data(), need, nullptr, nullptr);
+    return (std::filesystem::path(home)/".easy_git").string();
+#else
     const char* dir = getenv("HOME");
-    if (dir && *dir) return (std::filesystem::path(dir)/".easy_git").string();
-    auto* entry = getpwuid(getuid());
-    if (!entry) throw std::runtime_error("Cannot locate the user's home directory.");
-    return (std::filesystem::path(entry->pw_dir)/".easy_git").string();
+    if (!dir || !*dir) {
+        auto* entry = getpwuid(getuid());
+        if (!entry) throw std::runtime_error("Cannot locate the user's home directory.");
+        dir = entry->pw_dir;
+    }
+    if (!*dir) throw std::runtime_error("Cannot locate the user's home directory.");
+    return (std::filesystem::path(dir)/".easy_git").string();
+#endif
 }
 Settings read_settings(const std::string& path) {
     std::error_code ec;
@@ -280,19 +302,27 @@ void write_settings(const std::string& path,const Settings& settings) {
     if (settings.repositories.size() > 100) throw std::runtime_error("At most 100 repositories can be saved.");
     auto text = settings_json(settings);
     if (text.size() > 1024*1024) throw std::runtime_error("Settings file exceeds 1 MiB.");
-    std::string temp = path + ".tmp-XXXXXX"; int fd = mkstemp(temp.data());
-    if (fd < 0) throw std::runtime_error("Cannot create settings file: " + std::string(strerror(errno)));
-    bool ok = fchmod(fd,S_IRUSR | S_IWUSR) == 0;
-    size_t done = 0;
-    while (ok && done < text.size()) {
-        auto n = write(fd,text.data()+done,text.size()-done);
-        if (n < 0 && errno == EINTR) continue;
-        if (n <= 0) ok = false; else done += size_t(n);
+    // A sibling temporary file keeps the replace on one volume, so a failed save
+    // never truncates the settings the user already had.
+    std::error_code ec;
+    auto directory = std::filesystem::path(path).parent_path();
+    std::string temp = write_temporary_file(directory.empty() ? std::filesystem::path(".") : directory,
+                                            ".easy_git.tmp-", text);
+#ifndef _WIN32
+    // mkstemp used to own the mode; the settings file must stay private to the user.
+    std::error_code tightened;
+    std::filesystem::permissions(temp, std::filesystem::perms::owner_read | std::filesystem::perms::owner_write,
+                                 std::filesystem::perm_options::replace, tightened);
+    if (tightened) {
+        std::filesystem::remove(temp, tightened);
+        throw std::runtime_error("Cannot create settings file with private permissions.");
     }
-    if (ok) ok = fsync(fd) == 0;
-    if (close(fd) != 0) ok = false;
-    if (ok) ok = rename(temp.c_str(),path.c_str()) == 0;
-    if (!ok) { unlink(temp.c_str()); throw std::runtime_error("Could not save settings; the previous file was kept."); }
+#endif
+    if (!replace_file(temp, path)) {
+        std::error_code ignored;
+        std::filesystem::remove(temp, ignored);
+        throw std::runtime_error("Could not save settings; the previous file was kept.");
+    }
 }
 void validate_ai(const AiSettings& s) {
     if (trim(s.model).empty() || trim(s.language).empty()) throw std::runtime_error("Enter a model and output language.");

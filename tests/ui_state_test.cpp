@@ -1,10 +1,15 @@
-// Exercise the real tab controller and ImGui state without an X server or a test framework.
+// Exercise the real tab controller and ImGui state without a display server or a test framework.
 #define EASY_GIT_UI_TEST
+#include "../src/fs_helpers.h"
 #include "../src/main.cpp"
 #include "imgui_internal.h"
 #include <iostream>
 #include <thread>
+#ifdef _WIN32
+#include <windows.h>
+#else
 #include <unistd.h>
+#endif
 
 void require(bool condition, const char* message) {
     if (!condition) throw std::runtime_error(message);
@@ -24,15 +29,25 @@ void settle(App& app) {
 }
 
 int main() {
+#ifdef _WIN32
+    fs::path base = eg::make_test_directory("easy-git-tabs-test-");
+#else
     char pattern[] = "/tmp/easy-git-tabs-test-XXXXXX";
     char* dir = mkdtemp(pattern); if (!dir) return 1;
-    fs::path base(dir), root_a = base / "仓库 A", root_b = base / "仓库 B";
+    fs::path base(dir);
+#endif
+    fs::path root_a = base / "仓库 A", root_b = base / "仓库 B";
     ImGui::CreateContext();
     auto& io = ImGui::GetIO(); io.DisplaySize = {1440,900}; io.DeltaTime = 1.0f/60;
     io.IniFilename = nullptr; body_font = mono_font = io.Fonts->AddFontDefault();
     unsigned char* pixels; int w,h; io.Fonts->GetTexDataAsRGBA32(&pixels,&w,&h);
     theme(); App app;
     try {
+#ifdef _WIN32
+        // The Windows CRT ships no IANA timezone database, so the zone matrix is
+        // exercised on POSIX and only the fallback is checked here.
+        require(local_commit_time("invalid")=="invalid","Invalid date fallback failed");
+#else
         const char* tz = getenv("TZ"); bool had_tz = tz != nullptr; std::string old_tz = tz ? tz : "";
         setenv("TZ","Asia/Shanghai",1); tzset();
         require(local_commit_time("2026-01-01T23:30:00-05:00").rfind("2026-01-02 12:30:00",0)==0,"Commit offset was not converted to local timezone");
@@ -42,6 +57,7 @@ int main() {
         setenv("TZ","UTC",1); tzset();
         require(local_commit_time("2026-01-01T00:15:00+05:30").rfind("2025-12-31 18:45:00",0)==0 && local_commit_time("invalid")=="invalid","Fractional timezone or invalid date fallback failed");
         if (had_tz) setenv("TZ",old_tz.c_str(),1); else unsetenv("TZ"); tzset();
+#endif
         {
             RepoTab tab;
             for (const auto& id : {"new","middle","old"}) { eg::Commit c; c.id=id; tab.repo.commits.push_back(c); }
@@ -340,7 +356,12 @@ int main() {
         require(app.tabs.size() == 1 && app.find(b_id) == b && std::string(b->message) == "Draft for B","Closing A damaged B");
 
         auto stop = b->cancel;
+#ifdef _WIN32
+        // No sleep.exe on Windows; a short ping wait keeps the job busy for a moment.
+        b->launch("Background read",[stop] { eg::run_process({"cmd","/c","ping","-n","2","127.0.0.1"},stop); return JobResult{}; });
+#else
         b->launch("Background read",[stop] { eg::run_process({"sleep","0.1"},stop); return JobResult{}; });
+#endif
         app.request_close(b_id);
         require(app.tabs.size() == 1 && b->busy(),"Closed a repository while its operation was active");
         settle(app);
@@ -666,9 +687,9 @@ int main() {
             tab.silent_fetch(601); require(!tab.fetch_job.valid(),"Failed fetch retried too quickly");
             tab.pending_kind="confirmation"; tab.silent_fetch(900); require(!tab.fetch_job.valid(),"Fetch started during confirmation");
         }
-        restored.shutdown(); ImGui::DestroyContext(); fs::remove_all(base); return 0;
+        restored.shutdown(); ImGui::DestroyContext(); eg::remove_tree(base); return 0;
     } catch (const std::exception& e) {
         std::cerr << "FAIL: " << e.what() << '\n';
-        app.shutdown(); ImGui::DestroyContext(); fs::remove_all(base); return 1;
+        app.shutdown(); ImGui::DestroyContext(); eg::remove_tree(base); return 1;
     }
 }
