@@ -19,6 +19,8 @@ struct Settings {
     std::vector<std::string> repositories;
     std::string active_repository;
     WindowSettings window;
+    std::string ui_font, diff_font;
+    int ui_font_size = 16, diff_font_size = 14;
 };
 struct AiPreset {
     const char* name; const char* base_url; const char* model;

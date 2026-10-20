@@ -23,12 +23,19 @@
 #include <sstream>
 #include <stdexcept>
 #include <ctime>
+#include <thread>
+#include <cstring>
+#include <cerrno>
 #ifdef _WIN32
 #include <windows.h>
 #include <shellapi.h>
 #include <shobjidl.h>
 #else
 #include <sys/stat.h>
+#include <spawn.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#include <fcntl.h>
 #endif
 
 namespace {
@@ -40,6 +47,72 @@ ImVec4 red(0.94f, 0.48f, 0.52f, 1);
 bool light_theme = false;
 ImFont* body_font = nullptr;
 ImFont* mono_font = nullptr;
+float ui_font_scale = 1, diff_font_scale = 1;
+
+bool usable_font(const fs::path& path) {
+    std::error_code ec;
+    if (!fs::is_regular_file(path,ec) || fs::file_size(path,ec) > 64*1024*1024 || ec) return false;
+    std::ifstream in(path,std::ios::binary); char header[4]{};
+    return bool(in.read(header,4)) && (std::string(header,4)==std::string("\0\1\0\0",4) ||
+        std::string(header,4)=="OTTO" || std::string(header,4)=="ttcf" || std::string(header,4)=="true");
+}
+std::vector<std::string> installed_fonts() {
+#ifdef _WIN32
+    std::vector<fs::path> roots = {"C:/Windows/Fonts"};
+    if (const char* local = getenv("LOCALAPPDATA")) roots.emplace_back(fs::path(local)/"Microsoft/Windows/Fonts");
+#else
+    std::vector<fs::path> roots = {"/usr/share/fonts","/usr/local/share/fonts"};
+    if (const char* home = getenv("HOME")) {
+        roots.emplace_back(fs::path(home)/".fonts");
+        roots.emplace_back(fs::path(home)/".local/share/fonts");
+    }
+    if (const char* data = getenv("XDG_DATA_HOME")) roots.emplace_back(fs::path(data)/"fonts");
+#endif
+    std::set<std::string> fonts;
+    for (const auto& root : roots) {
+        std::error_code ec;
+        for (fs::recursive_directory_iterator it(root,fs::directory_options::skip_permission_denied,ec), end;
+             !ec && it!=end; it.increment(ec)) {
+            auto ext = it->path().extension().string();
+            if ((ext==".ttf" || ext==".otf" || ext==".ttc") && usable_font(it->path())) fonts.insert(it->path().string());
+        }
+    }
+    return {fonts.begin(),fonts.end()};
+}
+void load_fonts(const eg::Settings& settings) {
+    ui_font_scale = settings.ui_font_size / 16.0f;
+    diff_font_scale = settings.diff_font_size / 14.0f;
+    auto* atlas = ImGui::GetIO().Fonts;
+#ifdef _WIN32
+    const char* body_candidates[] = {"C:/Windows/Fonts/segoeui.ttf","C:/Windows/Fonts/arial.ttf"};
+    const char* cjk_candidates[] = {"C:/Windows/Fonts/msyh.ttc","C:/Windows/Fonts/simhei.ttf","C:/Windows/Fonts/simsun.ttc"};
+    const char* mono_candidates[] = {"C:/Windows/Fonts/consola.ttf","C:/Windows/Fonts/cour.ttf"};
+#else
+    const char* body_candidates[] = {"/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"};
+    const char* cjk_candidates[] = {"/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"};
+    const char* mono_candidates[] = {"/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"};
+#endif
+    auto first_usable = [](const char* const* names, size_t count) -> std::string {
+        for (size_t i = 0; i < count; ++i) if (usable_font(names[i])) return names[i];
+        return {};
+    };
+    const auto body = first_usable(body_candidates,std::size(body_candidates));
+    const auto mono = first_usable(mono_candidates,std::size(mono_candidates));
+    const auto cjk = first_usable(cjk_candidates,std::size(cjk_candidates));
+    auto add = [&](const std::string& selected,const std::string& fallback,float size) {
+        std::string path = usable_font(selected) ? selected : fallback;
+        ImFontConfig fallback_config; fallback_config.SizePixels = size;
+        ImFont* font = usable_font(path) ? atlas->AddFontFromFileTTF(path.c_str(),size) : atlas->AddFontDefault(&fallback_config);
+        if (path!=cjk && usable_font(cjk)) {
+            ImFontConfig config; config.MergeMode = true;
+            atlas->AddFontFromFileTTF(cjk.c_str(),size,&config);
+        }
+        return font;
+    };
+    body_font = add(settings.ui_font,body,float(settings.ui_font_size));
+    mono_font = add(settings.diff_font,mono,float(settings.diff_font_size));
+    ImGui::GetIO().FontDefault = body_font;
+}
 
 // Git prints ISO-8601 with a numeric zone; the CRT date helpers differ per
 // platform, so the instant is assembled from the parsed fields instead.
@@ -155,6 +228,39 @@ std::string browse_for_folder(const std::string& start, const std::shared_ptr<st
 }
 #endif
 
+void open_terminal(const std::string& root) {
+    if (root.empty() || root.find('\0') != std::string::npos || !fs::is_directory(fs::u8path(root)))
+        throw std::runtime_error("Repository directory is unavailable.");
+#ifdef _WIN32
+    const wchar_t* shell = _wgetenv(L"COMSPEC");
+    auto result = ShellExecuteW(nullptr,L"open",shell && *shell ? shell : L"cmd.exe",
+                               nullptr,widen(root).c_str(),SW_SHOWNORMAL);
+    if (reinterpret_cast<INT_PTR>(result) <= 32)
+        throw std::runtime_error("Cannot open the system terminal.");
+#else
+    posix_spawn_file_actions_t actions;
+    int code = posix_spawn_file_actions_init(&actions);
+    if (code) throw std::runtime_error(std::strerror(code));
+    code = posix_spawn_file_actions_addchdir_np(&actions,root.c_str());
+    for (int fd=0; !code && fd<3; ++fd)
+        code = posix_spawn_file_actions_addopen(&actions,fd,"/dev/null",O_RDWR,0);
+    pid_t pid = 0;
+    if (!code) {
+        // Prefer the desktop default, then Debian's configured terminal alternative.
+        for (const char* executable : {"xdg-terminal-exec","x-terminal-emulator"}) {
+            std::string name = executable, directory = "--dir=" + root;
+            char* args[] = {name.data(),name=="xdg-terminal-exec" ? directory.data() : nullptr,nullptr};
+            code = posix_spawnp(&pid,executable,&actions,nullptr,args,environ);
+            if (code != ENOENT) break;
+        }
+    }
+    posix_spawn_file_actions_destroy(&actions);
+    if (code) throw std::runtime_error(std::string("Cannot open terminal (xdg-terminal-exec or x-terminal-emulator): ") + std::strerror(code));
+    // Reap the terminal without keeping the repository busy or waiting on app shutdown.
+    std::thread([pid] { int status; while (waitpid(pid,&status,0)<0 && errno==EINTR) {} }).detach();
+#endif
+}
+
 void label(const char* text) { ImGui::TextColored(muted, "%s", text); }
 bool button(const char* text, bool enabled = true, ImVec2 size = {}) {
     ImGui::BeginDisabled(!enabled);
@@ -171,7 +277,7 @@ void end_context_menu() {
     ImGui::EndPopup(); ImGui::PopStyleVar(2); ImGui::PopFont();
 }
 bool begin_context_menu(const char* id = nullptr) {
-    ImGui::PushFont(body_font,16);
+    ImGui::PushFont(body_font,16 * ui_font_scale);
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,{10,8});
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,{10,7});
     if (ImGui::BeginPopupContextItem(id)) return true;
@@ -343,7 +449,9 @@ struct RepoTab {
     std::string selected_ref, scroll_to_commit;
     bool stash_view = false, restore_index = false, hard_confirm = false;
     int reset_mode = 1, mainline = 1;
-    char sidebar_search[256] = {};
+    char sidebar_search[256] = {}, branch_search[256] = {};
+    bool focus_sidebar_search = false, branch_combo_open = false;
+    std::function<void()> sidebar_action;
     char path[4096] = {}, search[256] = {}, message[8192] = {}, description[8192] = {}, new_name[256] = {}, file_search[256] = {};
     int limit = 300;
     float sidebar_width = 210, detail_width = 410;
@@ -819,7 +927,7 @@ struct RepoTab {
 
     void header() {
         ImGui::BeginChild("toolbar", {0, 68}, ImGuiChildFlags_AlwaysUseWindowPadding);
-        bool compact = ImGui::GetContentRegionAvail().x < 1150;
+        bool compact = ImGui::GetContentRegionAvail().x < 1250;
         auto* draw = ImGui::GetWindowDrawList();
         auto p = ImGui::GetCursorScreenPos();
         draw->AddBezierCubic({p.x+8,p.y+29}, {p.x+8,p.y+14}, {p.x+30,p.y+26}, {p.x+30,p.y+9}, lane_colors[0], 2.5f);
@@ -828,19 +936,31 @@ struct RepoTab {
             draw->AddCircleFilled({p.x+v.x,p.y+v.y}, 4, lane_colors[0]);
         ImGui::Dummy({40,36}); ImGui::SameLine();
         ImGui::BeginGroup();
-        ImGui::PushFont(body_font, 20); ImGui::TextUnformatted("easy git"); ImGui::PopFont();
-        ImGui::PushFont(body_font, 12); label("YOUR REPOSITORY, CONNECTED"); ImGui::PopFont();
-        ImGui::EndGroup(); ImGui::SameLine(285);
+        ImGui::PushFont(body_font,20 * ui_font_scale); ImGui::TextUnformatted("easy git"); ImGui::PopFont();
+        if (!compact) { ImGui::PushFont(body_font,12 * ui_font_scale); label("YOUR REPOSITORY, CONNECTED"); ImGui::PopFont(); }
+        ImGui::EndGroup(); ImGui::SameLine(compact ? 220 : 285);
         auto name = repo.root.empty() ? "Open repository" : "+ Open repository";
-        if (button((std::string(name) + "##open_repo").c_str(), !busy(), {compact ? 180.0f : 200.0f,36})) opening = true;
+        if (button((std::string(name) + "##open_repo").c_str(), !busy(), {compact ? 160.0f : 200.0f,36})) opening = true;
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", repo.root.empty() ? "Open a local Git repository" : repo.root.c_str());
-        ImGui::SameLine(); ImGui::SetNextItemWidth(compact ? 150 : 180);
-        ImGui::BeginDisabled(!idle());
-        if (ImGui::BeginCombo("##branch", repo.branch.empty() ? "No branch" : repo.branch.c_str())) {
-            for (const auto& ref : repo.refs) if (ref.full.rfind("refs/heads/",0) == 0) {
+        ImGui::SameLine(); ImGui::SetNextItemWidth(compact ? 130 : 180);
+        ImGui::BeginDisabled(!idle() && !branch_combo_open);
+        branch_combo_open = ImGui::BeginCombo("##branch", repo.branch.empty() ? "No branch" : repo.branch.c_str());
+        if (branch_combo_open) {
+            if (ImGui::IsWindowAppearing()) {
+                branch_search[0] = 0;
+                ImGui::SetKeyboardFocusHere();
+            }
+            ImGui::SetNextItemWidth(-1);
+            ImGui::InputTextWithHint("##branch_search","Search branches...",branch_search,sizeof(branch_search));
+            ImGui::BeginDisabled(!idle());
+            int count = 0;
+            for (const auto& ref : repo.refs) if (ref.full.rfind("refs/heads/",0) == 0 && text_matches(ref.name,branch_search)) {
+                ++count;
                 if (ImGui::Selectable(ref.name.c_str(), ref.name == repo.branch))
                     command("Switch branch", {"switch", "--", ref.name});
             }
+            if (!count && !busy()) label("No matching branches");
+            ImGui::EndDisabled();
             ImGui::EndCombo();
         }
         ImGui::EndDisabled();
@@ -859,15 +979,20 @@ struct RepoTab {
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
             ImGui::SetTooltip("Save all staged, unstaged and untracked changes (excluding ignored files).\nName: %s",message[0] ? message : "Saved from easy git");
         ImGui::SameLine(); if (button("Refresh", ready(), {83,36})) load(repo.root);
+        ImGui::SameLine(); if (button("Terminal", !repo.root.empty(), {94,36})) {
+            try { open_terminal(repo.root); }
+            catch (const std::exception& e) { error = e.what(); }
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Open a terminal in this repository");
         ImGui::EndChild();
     }
 
-    bool sidebar_matches(const std::string& name) const {
-        std::string query = sidebar_search;
+    static bool text_matches(const std::string& name, const std::string& query) {
         auto lower = [](unsigned char c) { return c >= 'A' && c <= 'Z' ? c + ('a'-'A') : c; };
         return std::search(name.begin(),name.end(),query.begin(),query.end(),
             [&](unsigned char a,unsigned char b) { return lower(a)==lower(b); }) != name.end() || query.empty();
     }
+    bool sidebar_matches(const std::string& name) const { return text_matches(name,sidebar_search); }
     void refs_section(const std::string& prefix) {
         int count = 0;
         for (const auto& ref : repo.refs) {
@@ -876,7 +1001,19 @@ struct RepoTab {
             auto pos = ImGui::GetCursorScreenPos();
             bool current = ref.full == "refs/heads/" + repo.branch;
             bool selected = selected_ref.empty() ? current : selected_ref == ref.full;
-            if (ImGui::Selectable("##ref", selected, 0, {0,26}) && !busy()) navigate_ref(ref);
+            bool clicked = ImGui::Selectable("##ref", selected, ImGuiSelectableFlags_AllowDoubleClick, {0,26});
+            bool double_clicked = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) && ImGui::IsMouseDoubleClicked(0);
+            if (clicked || double_clicked) {
+                focus_sidebar_search = true;
+                if (double_clicked && repo.operation.empty() &&
+                    (prefix == "refs/heads/" || prefix == "refs/remotes/")) {
+                    sidebar_action = [this,ref,prefix] {
+                        command("Switch branch",prefix == "refs/heads/" ?
+                            std::vector<std::string>{"switch","--",ref.name} :
+                            std::vector<std::string>{"switch","--track","--",ref.name});
+                    };
+                } else if (!busy()) navigate_ref(ref);
+            }
             auto* draw = ImGui::GetWindowDrawList();
             draw->AddCircleFilled({pos.x+7,pos.y+12},3, current ? lane_colors[0] : IM_COL32(121,132,155,255));
             text_clipped(draw, {pos.x+22,pos.y+3}, ref.name,
@@ -916,11 +1053,16 @@ struct RepoTab {
         return heights;
     }
     void sidebar() {
+        if (focus_sidebar_search) {
+            if (!ImGui::IsPopupOpen(nullptr,ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel))
+                ImGui::SetKeyboardFocusHere();
+            focus_sidebar_search = false;
+        }
         ImGui::SetNextItemWidth(-1);
         ImGui::InputTextWithHint("##sidebar_search","Filter sidebar...",sidebar_search,sizeof(sidebar_search));
         section("WORKSPACE");
         if (sidebar_matches("Working changes")) {
-            if (ImGui::Selectable("Working changes", workspace, 0, {0,30})) select_workspace();
+            if (ImGui::Selectable("Working changes", workspace, 0, {0,30})) { select_workspace(); focus_sidebar_search = true; }
             label((std::to_string(repo.files.size()) + " changed files").c_str());
         } else label("  No matches");
         const char* titles[] = {"LOCAL","REMOTE","TAGS","STASH"};
@@ -976,10 +1118,17 @@ struct RepoTab {
             ++count;
             ImGui::PushID(stash.ref.c_str());
             auto pos = ImGui::GetCursorScreenPos();
-            if (ImGui::Selectable("##stash",stash_view && viewed_stash.id == stash.id,0,{0,26}) && ready()) select_stash(stash);
+            bool clicked = ImGui::Selectable("##stash",stash_view && viewed_stash.id == stash.id,ImGuiSelectableFlags_AllowDoubleClick,{0,26});
+            bool double_clicked = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) && ImGui::IsMouseDoubleClicked(0);
+            if (clicked || double_clicked) {
+                focus_sidebar_search = true;
+                if (double_clicked && repo.operation.empty()) {
+                    sidebar_action = [this,stash] { mutate("Apply stash",[stash](const eg::Git& git) { git.apply_stash(stash,false); }); };
+                } else if (ready()) select_stash(stash);
+            }
             text_clipped(ImGui::GetWindowDrawList(),{pos.x+5,pos.y+4},stash.subject,
                 ImGui::GetColorU32(ImGuiCol_Text),{pos.x+ImGui::GetContentRegionAvail().x,pos.y+26});
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s\nClick to preview",stash.subject.c_str());
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s\nClick to preview; double-click to apply",stash.subject.c_str());
             if (begin_context_menu()) {
                 stash_actions(stash);
                 end_context_menu();
@@ -1025,7 +1174,7 @@ struct RepoTab {
         draw->AddCircle({x(row.lane),mid}, 4.5f, lane_colors[row.lane % 6], 16, 2);
     }
     void history() {
-        ImGui::PushFont(body_font, 22); ImGui::TextUnformatted("Commit graph"); ImGui::PopFont();
+        ImGui::PushFont(body_font,22 * ui_font_scale); ImGui::TextUnformatted("Commit graph"); ImGui::PopFont();
         same_line_if_fits(200); ImGui::TextColored(muted, "  %zu commits / %zu stashes", repo.commits.size(),repo.stashes.size());
         ImGui::SetNextItemWidth(-1);
         if (ImGui::InputTextWithHint("##search", "Search commits, stashes, authors, refs or SHA...", search, sizeof(search))) filter();
@@ -1282,7 +1431,7 @@ struct RepoTab {
                 if (!exists) label("Deleted in this version");
                 else if (conflict.binary) label("Binary file: choose an entire version");
                 else {
-                    ImGui::PushFont(mono_font,13);
+                    ImGui::PushFont(mono_font,13 * diff_font_scale);
                     if (!blocks.empty() && !remove_resolution) {
                         for (int i=0;i<int(choices[side].size());++i) {
                             ImGui::PushID(i); bool selected=conflict_lines[side].count(i);
@@ -1312,7 +1461,7 @@ struct RepoTab {
             }
             bool unresolved=eg::has_conflict_markers(resolution.data());
             ImGui::TextColored(unresolved ? ImVec4(0.9f,0.65f,0.3f,1) : mint,"OUTPUT - %s",unresolved ? "unresolved conflicts remain" : "ready to save");
-            ImGui::PushFont(mono_font,14);
+            ImGui::PushFont(mono_font,14 * diff_font_scale);
             ImGui::InputTextMultiline("##resolution",resolution.data(),resolution.size(),{-1,std::max(70.0f,ImGui::GetContentRegionAvail().y-58)},ImGuiInputTextFlags_AllowTabInput);
             ImGui::PopFont();
         } else ImGui::TextUnformatted(remove_resolution ? "Output: delete this file" : binary_chosen ? "Output: selected binary version" : "Choose a whole version for the output.");
@@ -1328,12 +1477,12 @@ struct RepoTab {
     }
     void diff_view() {
         ImGui::BeginChild("diff", {0,0}, 0, ImGuiWindowFlags_HorizontalScrollbar);
-        ImGui::PushFont(mono_font, 14);
+        ImGui::PushFont(mono_font,14 * diff_font_scale);
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, {0,0});
         if (detail_lines.empty()) {
             ImGui::TextColored(muted, "%s", busy() ? "Loading file diff..." : "No textual changes in this file.");
         } else {
-            const float h = 23;
+            const float h = std::max(23.0f,ImGui::GetFontSize()+9);
             ImGuiListClipper clipper; clipper.Begin(int(detail_lines.size()), h);
             while (clipper.Step()) for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; ++i) {
                 const auto& row = detail_lines[i]; const auto& line = row.text;
@@ -1383,7 +1532,7 @@ struct RepoTab {
         same_line_if_fits(110);
         if (button("Copy patch", !busy() && !detail.empty())) ImGui::SetClipboardText(detail.c_str());
         ImGui::Spacing();
-        ImGui::PushFont(body_font,20); ImGui::TextUnformatted(visible_path(selected_file).c_str()); ImGui::PopFont();
+        ImGui::PushFont(body_font,20 * ui_font_scale); ImGui::TextUnformatted(visible_path(selected_file).c_str()); ImGui::PopFont();
         label(workspace ? "Working changes / Inline diff" : stash_view ? "Saved changes / Inline diff" : "Commit changes / Inline diff");
         if (workspace) {
             if (button(selected_staged ? "Unstage lines" : "Stage lines",partial_available() && !selected_lines.empty()))
@@ -1470,7 +1619,7 @@ struct RepoTab {
                 ImGui::TextWrapped("%s",visible_path(file_revisions[history_selected].file.path).c_str()); ImGui::Separator();
             }
             if (history_patch.empty()) label(busy() ? "Loading diff..." : "No textual changes.");
-            ImGui::PushFont(mono_font,14); ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,{0,0});
+            ImGui::PushFont(mono_font,14 * diff_font_scale); ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,{0,0});
             ImGuiListClipper patch_clipper; patch_clipper.Begin(int(history_patch_lines.size()),ImGui::GetTextLineHeight());
             while (patch_clipper.Step()) for (int i=patch_clipper.DisplayStart;i<patch_clipper.DisplayEnd;++i) {
                 const auto& line=history_patch_lines[i];
@@ -1568,7 +1717,7 @@ struct RepoTab {
             auto chosen = discard_targets();
             bool enabled = ready() && !chosen.empty() && std::none_of(chosen.begin(),chosen.end(),[](const auto& f) { return f.conflicted(); });
             ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,{5,4});
-            ImGui::PushFont(body_font,14); ImGui::PushStyleColor(ImGuiCol_Text,red);
+            ImGui::PushFont(body_font,14 * ui_font_scale); ImGui::PushStyleColor(ImGuiCol_Text,red);
             bool all = !has_file_selection();
             if (button("Discard",enabled,{64,28})) request_discard(chosen,all);
             ImGui::PopStyleColor(); ImGui::PopFont(); ImGui::PopStyleVar();
@@ -1588,7 +1737,7 @@ struct RepoTab {
         size_t count = 0; for (const auto& selected : file_selection) count += selected.size();
         if (count) {
             auto after = ImGui::GetCursorScreenPos();
-            ImGui::PushFont(body_font,12);
+            ImGui::PushFont(body_font,12 * ui_font_scale);
             auto text = std::to_string(count) + " selected";
             ImGui::SetCursorScreenPos({p.x+width-ImGui::CalcTextSize(text.c_str()).x,p.y+6}); label(text.c_str());
             ImGui::PopFont(); ImGui::SetCursorScreenPos(after);
@@ -1608,7 +1757,7 @@ struct RepoTab {
         std::string title = kind == 2 ? (stash_view ? "Stash Files" : "Changed Files") : staged ? "Staged Files" : "Unstaged Files";
         title += " (" + std::to_string(total) + ")";
         title += "###file_group";
-        ImGui::PushFont(body_font,14);
+        ImGui::PushFont(body_font,14 * ui_font_scale);
         ImGui::PushStyleColor(ImGuiCol_Header,light_theme ? ImVec4(0.87f,0.91f,0.93f,1) : ImVec4(0.15f,0.17f,0.22f,1));
         bool expanded = ImGui::CollapsingHeader(title.c_str(),ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_AllowOverlap);
         ImGui::PopStyleColor();
@@ -1886,6 +2035,10 @@ struct RepoTab {
         ImGui::SameLine(0,0);
     }
     void frame() {
+        if (sidebar_action && !busy()) {
+            auto action = std::move(sidebar_action); sidebar_action = {};
+            if (idle() && error.empty()) action();
+        }
         header();
         float height = ImGui::GetContentRegionAvail().y - 36;
         float width = ImGui::GetContentRegionAvail().x;
@@ -1913,6 +2066,16 @@ struct App {
     bool settings_open = false, config_blocked = false, show_key = false;
     char ai_model_name[81]{}, ai_filter[128]{};
     std::string ai_model_error;
+    std::vector<std::string> font_choices;
+    char font_filter[256]{};
+    bool fonts_pending = false;
+    void apply_pending_fonts() {
+        if (!fonts_pending || !config_error.empty()) return;
+        // Rebuild between frames, after the previous draw data has been rendered.
+        ImGui::GetIO().Fonts->Clear();
+        load_fonts(settings);
+        fonts_pending = false;
+    }
     double window_changed_at = -1;
     void initialize(const std::string& file,const std::vector<std::string>& roots = {}) {
         config_path = file;
@@ -1945,6 +2108,7 @@ struct App {
     }
     void settings_dialog() {
         if (settings_open) {
+            font_choices = installed_fonts(); font_filter[0] = 0;
             settings_draft = settings; show_key = false; ai_model_name[0] = ai_filter[0] = 0; ai_model_error.clear();
             ImGui::OpenPopup("Settings"); settings_open = false;
         }
@@ -1952,6 +2116,31 @@ struct App {
         if (!ImGui::BeginPopupModal("Settings",nullptr)) return;
         ImGui::BeginChild("settings_content",{0,-48});
         ImGui::TextWrapped("Saved to: %s",config_path.empty() ? "~/.easy_git" : config_path.c_str());
+        ImGui::TextUnformatted("Fonts");
+        auto font_choice = [&](const char* label,std::string& selected) {
+            auto name = selected.empty() ? std::string("Default") : fs::path(selected).filename().string();
+            if (ImGui::BeginCombo(label,name.c_str())) {
+                if (ImGui::IsWindowAppearing()) { font_filter[0] = 0; ImGui::SetKeyboardFocusHere(); }
+                ImGui::InputTextWithHint("##font_filter","Search fonts...",font_filter,sizeof(font_filter));
+                if (ImGui::Selectable("Default",selected.empty())) selected.clear();
+                for (const auto& file : font_choices) {
+                    if (!RepoTab::text_matches(file,font_filter)) continue;
+                    ImGui::PushID(file.c_str());
+                    if (ImGui::Selectable(fs::path(file).filename().c_str(),selected==file)) selected=file;
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s",file.c_str());
+                    ImGui::PopID();
+                }
+                ImGui::EndCombo();
+            }
+            if (!selected.empty() && !usable_font(selected)) ImGui::TextWrapped("Font unavailable; the default will be used.");
+        };
+        font_choice("Interface font",settings_draft.ui_font);
+        ImGui::SliderInt("Interface size (px)",&settings_draft.ui_font_size,12,20,"%d",ImGuiSliderFlags_AlwaysClamp);
+        font_choice("Diff font",settings_draft.diff_font);
+        ImGui::SliderInt("Diff size (px)",&settings_draft.diff_font_size,10,24,"%d",ImGuiSliderFlags_AlwaysClamp);
+        if (button("Reset font sizes")) { settings_draft.ui_font_size = 16; settings_draft.diff_font_size = 14; }
+        ImGui::TextWrapped("Save settings to apply fonts and sizes immediately. Default restores the built-in choices.");
+        ImGui::Separator();
         auto& draft = settings_draft.ai;
         ImGui::Checkbox("Enable AI commit messages",&draft.enabled);
         ImGui::TextWrapped("AI Generate sends your staged diff to the configured provider. Review the generated draft before committing.");
@@ -2049,6 +2238,10 @@ struct App {
         if (button("Save settings")) {
             try {
                 if (draft.enabled) eg::validate_ai(draft);
+                fonts_pending = fonts_pending || settings.ui_font != settings_draft.ui_font || settings.diff_font != settings_draft.diff_font ||
+                    settings.ui_font_size != settings_draft.ui_font_size || settings.diff_font_size != settings_draft.diff_font_size;
+                settings.ui_font_size = settings_draft.ui_font_size; settings.diff_font_size = settings_draft.diff_font_size;
+                settings.ui_font = settings_draft.ui_font; settings.diff_font = settings_draft.diff_font;
                 settings.ai = draft; settings.ai_profiles = settings_draft.ai_profiles; config_blocked = false; last_saved.clear(); persist(true);
                 if (config_error.empty()) ImGui::CloseCurrentPopup();
             } catch (const std::exception& e) { config_error = e.what(); }
@@ -2285,48 +2478,17 @@ int main(int argc, char** argv) {
     glfwMakeContextCurrent(window); glfwSwapInterval(1);
     IMGUI_CHECKVERSION(); ImGui::CreateContext(); theme();
     auto& io = ImGui::GetIO(); io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard; io.IniFilename = nullptr;
-    // Each platform ships its UI font family in a different place; use the first
-    // one that exists and keep ImGui's built-in font as the last resort.
-#ifdef _WIN32
-    const char* body_candidates[] = {"C:/Windows/Fonts/segoeui.ttf","C:/Windows/Fonts/arial.ttf"};
-    const char* cjk_candidates[] = {"C:/Windows/Fonts/msyh.ttc","C:/Windows/Fonts/simhei.ttf","C:/Windows/Fonts/simsun.ttc"};
-    const char* mono_candidates[] = {"C:/Windows/Fonts/consola.ttf","C:/Windows/Fonts/cour.ttf"};
-#else
-    const char* body_candidates[] = {"/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"};
-    const char* cjk_candidates[] = {"/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"};
-    const char* mono_candidates[] = {"/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"};
-#endif
-    std::error_code font_ec;
-    auto first_existing = [&](const char* const* names, size_t count) -> const char* {
-        for (size_t i = 0; i < count; ++i) if (fs::exists(names[i],font_ec)) return names[i];
-        return nullptr;
-    };
-    const char* body = first_existing(body_candidates,std::size(body_candidates));
-    const char* cjk = first_existing(cjk_candidates,std::size(cjk_candidates));
-    const char* mono = first_existing(mono_candidates,std::size(mono_candidates));
-    body_font = body ? io.Fonts->AddFontFromFileTTF(body,16) : io.Fonts->AddFontDefault();
-    ImVector<ImWchar> cjk_ranges;
-    if (cjk) {
-        ImFontGlyphRangesBuilder builder;
-        builder.AddRanges(io.Fonts->GetGlyphRangesDefault());
-        builder.AddRanges(io.Fonts->GetGlyphRangesChineseSimplifiedCommon());
-        builder.BuildRanges(&cjk_ranges);
-    }
-    if (cjk) { ImFontConfig config; config.MergeMode = true; config.GlyphRanges = cjk_ranges.Data; io.Fonts->AddFontFromFileTTF(cjk,16,&config); }
-    mono_font = mono ? io.Fonts->AddFontFromFileTTF(mono,13) : body_font;
-    if (mono_font != body_font && cjk) {
-        ImFontConfig config; config.MergeMode = true; config.GlyphRanges = cjk_ranges.Data;
-        io.Fonts->AddFontFromFileTTF(cjk,13,&config);
-    }
-    ImGui_ImplGlfw_InitForOpenGL(window,true); ImGui_ImplOpenGL3_Init("#version 330");
     App app;
     try { app.initialize(config_file.empty() ? eg::default_settings_path() : config_file,roots); }
     catch (const std::exception& e) { app.add_tab().error = e.what(); }
+    load_fonts(app.settings);
+    ImGui_ImplGlfw_InitForOpenGL(window,true); ImGui_ImplOpenGL3_Init("#version 330");
     restore_window(window,app.settings.window);
     int rendered = 0;
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
         if (capture_window(window,app.settings.window)) app.window_changed_at = ImGui::GetTime();
+        app.apply_pending_fonts();
         ImGui_ImplOpenGL3_NewFrame(); ImGui_ImplGlfw_NewFrame(); ImGui::NewFrame();
         app.frame(); ImGui::Render();
         int w,h; glfwGetFramebufferSize(window,&w,&h);

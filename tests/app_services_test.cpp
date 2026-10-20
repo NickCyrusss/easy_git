@@ -83,6 +83,9 @@ int main() {
         eg::Settings settings; settings.light = true; settings.ai.api_key = "test-secret";
         require(settings.window.width == 1440 && settings.window.height == 900,"Default window size changed");
         settings.window = {1280,800};
+        settings.ui_font_size = 18; settings.diff_font_size = 20;
+        settings.ui_font = fs::absolute("/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf").string();
+        settings.diff_font = fs::absolute("/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf").string();
         settings.ai.instructions = "中文 \"quoted\"\nsecond line";
         settings.repositories = {(root / "仓库 A").string(),(root / "仓库 B").string()}; settings.active_repository = settings.repositories[1];
         eg::write_settings(config.string(),settings);
@@ -103,12 +106,29 @@ int main() {
         auto previous = read(config); settings.ai.timeout = 0;
         rejects([&] { eg::write_settings(config.string(),settings); },"Invalid settings were saved");
         require(read(config) == previous,"Failed save replaced valid settings");
-        settings.ai.timeout = 120; settings.window.width = 0;
+        settings.ai.timeout = 120;
+        auto original_font = settings.ui_font;
+        for (const auto& invalid : {std::string("relative.ttf"),std::string("/font\0.ttf",10),std::string(8192,'x')}) {
+            settings.ui_font = invalid;
+            rejects([&] { eg::write_settings(config.string(),settings); },"Invalid font path was saved");
+            require(read(config)==previous,"Invalid font replaced valid settings");
+        }
+        settings.ui_font = original_font;
+        for (const auto sizes : {std::pair<int,int>{11,14},{21,14},{16,9},{16,25}}) {
+            settings.ui_font_size = sizes.first; settings.diff_font_size = sizes.second;
+            rejects([&] { eg::write_settings(config.string(),settings); },"Invalid font size was saved");
+            require(read(config)==previous,"Invalid font size replaced valid settings");
+        }
+        settings.ui_font_size = 18; settings.diff_font_size = 20; settings.window.width = 0;
         rejects([&] { eg::write_settings(config.string(),settings); },"Invalid window size was saved");
         require(read(config) == previous,"Invalid window size replaced valid settings");
         for (const auto* data : {R"({"window":{"width":-1}})",R"({"window":{"height":9999999999}})",R"({"window":{"width":"1280"}})",R"({"window":[]})"}) {
             std::ofstream(config) << data;
             rejects([&] { eg::read_settings(config.string()); },"Invalid saved window size was accepted");
+        }
+        for (const auto* data : {R"({"ui_font_size":11})",R"({"diff_font_size":25})",R"({"ui_font_size":16.5})",R"({"diff_font_size":"14"})",R"({"ui_font":42})",R"({"diff_font":"relative.ttf"})",R"({"ui_font":"/a\u0000.ttf"})"}) {
+            std::ofstream(config) << data;
+            rejects([&] { eg::read_settings(config.string()); },"Invalid saved font accepted");
         }
         std::ofstream(config) << "{broken";
         rejects([&] { eg::read_settings(config.string()); },"Malformed settings accepted");
@@ -117,6 +137,8 @@ int main() {
         // Existing single-provider files migrate without resetting customized fields.
         std::ofstream(config) << R"({"version":1,"ai":{"provider":"DeepSeek","model":"legacy-model","api_key":"legacy-key"}})";
         auto profiles = eg::read_settings(config.string());
+        require(profiles.ui_font_size==16 && profiles.diff_font_size==14,"Legacy font size defaults changed");
+        require(profiles.ui_font.empty() && profiles.diff_font.empty(),"Legacy font defaults changed");
         require(profiles.window.width == 1440 && profiles.window.height == 900,"Legacy file did not use default window size");
         require(profiles.ai_profiles.at("DeepSeek").api_key == "legacy-key","Legacy AI settings were not migrated");
         eg::select_ai_provider(profiles,eg::ai_presets()[1]);

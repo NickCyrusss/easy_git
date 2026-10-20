@@ -234,6 +234,12 @@ Settings read_settings(const std::string& path) {
         if (!json_object_is_type(w,json_type_object)) throw std::runtime_error("Invalid window settings.");
         s.window.width = number(w,"width",1440,64,32768); s.window.height = number(w,"height",900,64,32768);
     }
+    s.ui_font_size = number(doc.get(),"ui_font_size",16,12,20);
+    s.diff_font_size = number(doc.get(),"diff_font_size",14,10,24);
+    s.ui_font = string_value(doc.get(),"ui_font");
+    s.diff_font = string_value(doc.get(),"diff_font");
+    for (const auto& font : {s.ui_font,s.diff_font})
+        if (!font.empty() && !std::filesystem::path(font).is_absolute()) throw std::runtime_error("Font paths must be absolute.");
     s.active_repository = string_value(doc.get(),"active_repository");
     auto* repos = get(doc.get(),"repositories");
     if (repos) {
@@ -271,6 +277,9 @@ Settings read_settings(const std::string& path) {
 std::string settings_json(const Settings& s) {
     auto doc = object(); json_object_object_add(doc.get(),"version",json_object_new_int(1));
     json_object_object_add(doc.get(),"light",json_object_new_boolean(s.light));
+    json_object_object_add(doc.get(),"ui_font_size",json_object_new_int(s.ui_font_size));
+    json_object_object_add(doc.get(),"diff_font_size",json_object_new_int(s.diff_font_size));
+    put(doc.get(),"ui_font",s.ui_font); put(doc.get(),"diff_font",s.diff_font);
     put(doc.get(),"active_repository",s.active_repository);
     auto window = object();
     json_object_object_add(window.get(),"width",json_object_new_int(s.window.width));
@@ -288,6 +297,11 @@ std::string settings_json(const Settings& s) {
     return std::string(json_object_to_json_string_ext(doc.get(),JSON_C_TO_STRING_PRETTY | JSON_C_TO_STRING_NOSLASHESCAPE))+"\n";
 }
 void write_settings(const std::string& path,const Settings& settings) {
+    for (const auto& font : {settings.ui_font,settings.diff_font})
+        if (font.size() > 8191 || font.find('\0') != std::string::npos || (!font.empty() && !std::filesystem::path(font).is_absolute()))
+            throw std::runtime_error("Font paths must be absolute or empty for the default font.");
+    if (settings.ui_font_size < 12 || settings.ui_font_size > 20 || settings.diff_font_size < 10 || settings.diff_font_size > 24)
+        throw std::runtime_error("Interface font size must be 12-20 px; diff font size must be 10-24 px.");
     const auto& w = settings.window;
     if (w.width < 64 || w.width > 32768 || w.height < 64 || w.height > 32768)
         throw std::runtime_error("Invalid window size.");

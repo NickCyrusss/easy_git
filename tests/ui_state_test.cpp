@@ -15,6 +15,9 @@ void require(bool condition, const char* message) {
     if (!condition) throw std::runtime_error(message);
 }
 void frame(App& app) {
+    bool rebuild = app.fonts_pending && app.config_error.empty();
+    app.apply_pending_fonts();
+    if (rebuild) { unsigned char* pixels; int w,h; ImGui::GetIO().Fonts->GetTexDataAsRGBA32(&pixels,&w,&h); }
     ImGui::NewFrame(); app.frame(false); ImGui::Render();
 }
 void settle(App& app) {
@@ -160,6 +163,57 @@ int main() {
             a->repo.stashes=std::move(saved_stashes);
         }
         a->repo.refs=std::move(real_refs); io.DisplaySize={1440,900}; frame(app);
+        {
+            auto click = [&](ImVec2 pos) {
+                io.AddMousePosEvent(pos.x,pos.y); frame(app);
+                io.AddMouseButtonEvent(0,true); frame(app);
+                io.AddMouseButtonEvent(0,false); frame(app);
+            };
+            auto local_row = [&]() {
+                // LOCAL is the first visible child of the sidebar.
+                ImGuiWindow* first = nullptr;
+                for (auto* window : GImGui->Windows)
+                    if (window->Active && window->ParentWindow==sidebar && (!first || window->Pos.y<first->Pos.y)) first=window;
+                require(first!=nullptr,"Local sidebar list missing");
+                return ImVec2(first->Pos.x+40,first->Pos.y+13);
+            };
+            eg::Git git(root_a.string()); git.checked({"branch","aaa-keyboard-test"});
+            a->load(root_a.string()); settle(app);
+            click(local_row()); settle(app);
+            io.AddInputCharactersUTF8("AAA-keyboard"); frame(app); frame(app);
+            require(std::string(a->sidebar_search)=="AAA-keyboard" && !b->sidebar_search[0],"Typing after selecting a sidebar row did not search only that tab");
+            io.AddKeyEvent(ImGuiMod_Ctrl,true); io.AddKeyEvent(ImGuiKey_A,true); frame(app);
+            io.AddKeyEvent(ImGuiKey_A,false); io.AddKeyEvent(ImGuiMod_Ctrl,false);
+            io.AddKeyEvent(ImGuiKey_Backspace,true); frame(app); io.AddKeyEvent(ImGuiKey_Backspace,false); frame(app);
+            io.AddKeyEvent(ImGuiKey_Escape,true); frame(app); io.AddKeyEvent(ImGuiKey_Escape,false); frame(app);
+            for (int i=0;i<30;++i) frame(app);
+            auto row=local_row(); click(row); click(row); settle(app);
+            require(a->repo.branch=="aaa-keyboard-test","Double-click did not switch branch after preview");
+            a->command("Switch branch",{"switch","--","main"}); settle(app);
+            git.checked({"branch","-d","aaa-keyboard-test"});
+            auto open_combo = [&]() {
+                for (int i=0;i<30;++i) frame(app);
+                ImGuiWindow* toolbar=nullptr;
+                for (auto* window : GImGui->Windows)
+                    if (window->Active && std::string(window->Name).find("/toolbar_")!=std::string::npos) toolbar=window;
+                require(toolbar!=nullptr,"Toolbar missing");
+                click({toolbar->Pos.x+285+200+ImGui::GetStyle().ItemSpacing.x+30,toolbar->Pos.y+20});
+                settle(app);
+                require(a->branch_combo_open,"Branch dropdown did not open");
+            };
+            auto generation = a->operation_generation;
+            open_combo();
+            require(a->operation_generation==generation,"Opening dropdown started a repository refresh");
+            io.AddInputCharactersUTF8("MAIN"); frame(app); frame(app);
+            require(std::string(a->branch_search)=="MAIN" && RepoTab::text_matches("main",a->branch_search),"Dropdown did not focus branch search");
+            click({100,880}); frame(app);
+            open_combo();
+            require(!a->branch_search[0] && a->operation_generation==generation,"Reopening dropdown failed to clear search or started a refresh");
+            io.AddInputCharactersUTF8("main"); frame(app); frame(app);
+            require(std::string(a->branch_search)=="main","Reopening dropdown did not focus search");
+            click({100,880}); frame(app);
+            a->load(root_a.string()); settle(app);
+        }
         snprintf(a->message,sizeof(a->message),"Draft for A"); snprintf(a->description,sizeof(a->description),"Description A");
         snprintf(b->message,sizeof(b->message),"Draft for B");
         auto change = *std::find_if(a->repo.files.begin(),a->repo.files.end(),[](const auto& f) { return f.path == "src/shared.txt"; });
@@ -197,8 +251,52 @@ int main() {
         for (auto* window : GImGui->Windows)
             if (window->Active && std::string(window->Name).find("/toolbar_") != std::string::npos) toolbar=window;
         require(toolbar,"Toolbar missing");
-        float stash_x = toolbar->Pos.x + 285 + 180 + 150 + 70 + 64 + 64 + 5*ImGui::GetStyle().ItemSpacing.x + 32;
-        require(stash_x+32+ImGui::GetStyle().ItemSpacing.x+83 <= toolbar->ClipRect.Max.x,"Stash pushed Refresh outside compact toolbar");
+        float stash_x = toolbar->Pos.x + 220 + 160 + 130 + 70 + 64 + 64 + 5*ImGui::GetStyle().ItemSpacing.x + 32;
+        require(stash_x+32+2*ImGui::GetStyle().ItemSpacing.x+83+94 <= toolbar->ClipRect.Max.x,"Terminal is outside compact toolbar");
+#ifndef _WIN32
+        {
+            auto mock_dir = base/"terminal-bin"; fs::create_directory(mock_dir);
+            auto launcher = mock_dir/"xdg-terminal-exec";
+            std::ofstream(launcher) << "#!/bin/sh\nprintf '%s' \"$1\" > \"$0.arg\"\npwd -P > \"$0.cwd\"\n";
+            fs::permissions(launcher,fs::perms::owner_all);
+            const char* path = getenv("PATH"); bool had_path = path != nullptr;
+            std::string old_path = path ? path : "";
+            setenv("PATH",(mock_dir.string()+":"+old_path).c_str(),1);
+            auto cwd = fs::current_path();
+            float terminal_x = stash_x+32+2*ImGui::GetStyle().ItemSpacing.x+83+47;
+            io.AddMousePosEvent(terminal_x,toolbar->Pos.y+ImGui::GetStyle().WindowPadding.y+18); frame(app);
+            io.AddMouseButtonEvent(0,true); frame(app); io.AddMouseButtonEvent(0,false); frame(app);
+            if (had_path) setenv("PATH",old_path.c_str(),1); else unsetenv("PATH");
+            auto output = launcher.string()+".cwd", argument = launcher.string()+".arg";
+            auto wait_for_terminal = [&](const fs::path& expected) {
+                std::string actual;
+                for (int i=0;i<200;++i) {
+                    std::ifstream in(output); std::getline(in,actual);
+                    if (actual==expected.string()) break;
+                    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                }
+                require(actual==expected.string(),"Terminal opened in the wrong repository directory");
+                require(fs::current_path()==cwd,"Terminal changed the application's working directory");
+            };
+            wait_for_terminal(root_a);
+            std::ifstream arg(argument); std::string value((std::istreambuf_iterator<char>(arg)),{});
+            require(value=="--dir="+root_a.string(),"Default terminal did not receive the repository directory");
+            fs::remove(output);
+            fs::rename(launcher,mock_dir/"x-terminal-emulator");
+            launcher = mock_dir/"x-terminal-emulator"; output=launcher.string()+".cwd";
+            auto unusual = base/"终端 ' $(echo unsafe); directory"; fs::create_directory(unusual);
+            setenv("PATH",mock_dir.c_str(),1);
+            open_terminal(unusual.string());
+            if (had_path) setenv("PATH",old_path.c_str(),1); else unsetenv("PATH");
+            wait_for_terminal(unusual);
+            fs::remove(launcher);
+            setenv("PATH",mock_dir.c_str(),1);
+            bool failed = false;
+            try { open_terminal(root_a.string()); } catch (const std::exception&) { failed = true; }
+            if (had_path) setenv("PATH",old_path.c_str(),1); else unsetenv("PATH");
+            require(failed,"Missing terminal launcher did not report an error");
+        }
+#endif
         io.AddMousePosEvent(stash_x,toolbar->Pos.y+ImGui::GetStyle().WindowPadding.y+18); frame(app);
         io.AddMouseButtonEvent(0,true); frame(app); io.AddMouseButtonEvent(0,false); frame(app);
         app.active = app.focus = b_id; settle(app); io.DisplaySize = {1440,900}; frame(app);
@@ -244,9 +342,22 @@ int main() {
             "Stash diff missing or crossed repository tabs");
         require(git_a.checked({"status","--porcelain=v1","-z"}) == status_a &&
             git_b.checked({"status","--porcelain=v1","-z"}) == status_b,"Stash selection applied changes");
-        a->mutate("Apply stash",[saved](const eg::Git& git) { git.apply_stash(saved,true); }); settle(app);
+        app.active = app.focus = a_id; settle(app);
+        ImGuiWindow* stash_items=nullptr;
+        for (auto* window : GImGui->Windows)
+            if (window->Active && window->ParentWindow==sidebar && (!stash_items || window->Pos.y>stash_items->Pos.y)) stash_items=window;
+        require(stash_items!=nullptr,"Stash sidebar list missing");
+        for (int i=0;i<30;++i) frame(app);
+        io.AddMousePosEvent(stash_items->Pos.x+40,stash_items->Pos.y+13); frame(app);
+        for (int i=0;i<2;++i) {
+            io.AddMouseButtonEvent(0,true); frame(app); io.AddMouseButtonEvent(0,false); frame(app);
+        }
+        settle(app);
+        require(!git_a.checked({"diff","--name-only"}).empty() && fs::exists(root_a/"untracked.txt"),"Double-click did not apply stash contents");
         require(a->workspace && !a->stash_view && a->repo.stashes.size() == 1 &&
             git_b.checked({"status","--porcelain=v1","-z"}) == status_b,"Stash apply refresh or tab isolation failed");
+        // Restore this fixture's staged state for the subsequent discard tests.
+        git_a.checked({"read-tree",saved.id+"^2"}); a->load(root_a.string()); settle(app);
         a->select_commit(a->repo.commits.front()); settle(app);
         require(!a->stash_view && !a->workspace,"Commit selection retained stash mode");
 
@@ -381,16 +492,36 @@ int main() {
         restored.settings_open = true; frame(restored); frame(restored);
         eg::select_ai_provider(restored.settings_draft,eg::ai_presets()[1]);
         restored.settings_draft.ai.model = "cancelled-model";
+        restored.settings_draft.ui_font = "/cancelled.ttf";
+        restored.settings_draft.ui_font_size = 20; restored.settings_draft.diff_font_size = 24;
         settings_button(165); // Cancel must discard all profile edits, including switched-away ones.
+        require(restored.settings.ui_font_size==16 && restored.settings.diff_font_size==14,"Cancel changed font sizes");
+        require(restored.settings.ui_font.empty(),"Cancel changed the font setting");
         require(restored.settings.ai.provider == "DeepSeek" && !restored.settings.ai_profiles.count("Kimi"),"Cancel changed saved provider settings");
         restored.settings_open = true; frame(restored); frame(restored);
         require(restored.settings_draft.ai.provider == "DeepSeek" && !restored.settings_draft.ai_profiles.count("Kimi"),"Reopening settings retained cancelled edits");
         eg::select_ai_provider(restored.settings_draft,eg::ai_presets()[1]);
         restored.settings_draft.ai.model = "saved-kimi-model";
+        auto fonts = installed_fonts();
+        require(std::all_of(fonts.begin(),fonts.end(),[](const auto& path) { return usable_font(path); }),"Font list contains unusable files");
+        restored.settings_draft.ui_font = fonts.empty() ? (base/"missing-font.ttf").string() : fonts.front();
+        restored.settings_draft.diff_font = restored.settings_draft.ui_font;
+        restored.settings_draft.ui_font_size = 18; restored.settings_draft.diff_font_size = 20;
         eg::select_ai_provider(restored.settings_draft,eg::ai_presets()[0]);
         settings_button(60);
         auto saved_config = eg::read_settings(restored.config_path);
+        require(!restored.fonts_pending && ui_font_scale==18/16.0f && diff_font_scale==20/14.0f &&
+            io.FontDefault==body_font && body_font!=mono_font,"Saved fonts were not applied immediately");
+        require(saved_config.ui_font_size==18 && saved_config.diff_font_size==20,"Font sizes were not saved");
+        require(saved_config.ui_font==restored.settings_draft.ui_font && saved_config.diff_font==saved_config.ui_font,"Font choices were not saved");
+        std::ofstream(base/"invalid.ttf") << "not a font";
+        require(!usable_font(base/"invalid.ttf") && !usable_font(base/"missing.ttf"),"Invalid or missing font accepted");
         require(saved_config.ai.model == "persisted-test-model" && saved_config.ai_profiles.at("Kimi").model == "saved-kimi-model", "Save settings lost a switched-away profile");
+        restored.settings_open = true; frame(restored); frame(restored);
+        restored.settings_draft.ui_font.clear(); restored.settings_draft.diff_font.clear();
+        restored.settings_draft.ui_font_size=16; restored.settings_draft.diff_font_size=14;
+        settings_button(60);
+        require(ui_font_scale==1 && diff_font_scale==1 && !restored.fonts_pending,"Restoring default fonts did not apply immediately");
         restored.settings_open = true; frame(restored); frame(restored);
         eg::add_ai_model(restored.settings_draft,"Cancelled model");
         settings_button(165);
