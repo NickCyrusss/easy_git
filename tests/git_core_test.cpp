@@ -10,6 +10,11 @@ namespace fs = std::filesystem;
 void require(bool ok, const char* message) { if (!ok) throw std::runtime_error(message); }
 void write(const fs::path& path, const std::string& text) { std::ofstream(path, std::ios::binary) << text; }
 std::string read(const fs::path& path) { std::ifstream in(path, std::ios::binary); return {std::istreambuf_iterator<char>(in),{}}; }
+std::string read_lines(const fs::path& path) {
+    auto text = read(path);
+    for (size_t pos = 0; (pos = text.find("\r\n",pos)) != std::string::npos; ++pos) text.erase(pos,1);
+    return text;
+}
 const eg::File& file_named(const eg::Snapshot& s, const std::string& name) {
     auto f = std::find_if(s.files.begin(),s.files.end(),[&](const auto& f) { return f.path == name; });
     require(f != s.files.end(),"Expected changed file is missing"); return *f;
@@ -147,7 +152,7 @@ int main(int argc, char** argv) {
             std::string original; for (int i=0;i<30;++i) original += "line " + std::to_string(i) + "\n";
             write(root/"pull-test.txt",original); git.checked({"add","pull-test.txt"}); git.commit("Pull test base"); git.checked({"push"});
             auto clone = base/"pull clone";
-            git.checked({"clone",remote.string(),clone.string()});
+            git.checked({"clone","-c","core.autocrlf=true",remote.string(),clone.string()});
             eg::Git local(clone.string());
             local.checked({"config","pull.rebase","true"}); local.checked({"config","merge.autoStash","true"});
             auto upstream = original; upstream.replace(upstream.find("line 1\n"),7,"remote\n");
@@ -155,18 +160,18 @@ int main(int argc, char** argv) {
             auto edited = original; edited.replace(edited.find("line 28\n"),8,"local\n");
             write(clone/"pull-test.txt",edited); write(clone/"staged.txt","staged\n"); local.checked({"add","staged.txt"});
             local.pull();
-            require(read(clone/"pull-test.txt").find("remote\n")!=std::string::npos && read(clone/"pull-test.txt").find("local\n")!=std::string::npos,"Pull lost non-overlapping edits");
+            require(read_lines(clone/"pull-test.txt").find("remote\n")!=std::string::npos && read_lines(clone/"pull-test.txt").find("local\n")!=std::string::npos,"Pull lost non-overlapping edits");
             require(local.checked({"show",":staged.txt"})=="staged\n" && local.load().stashes.empty(),"Pull changed staged state or left a backup");
             local.checked({"add","pull-test.txt"});
             auto upstream2 = upstream; upstream2.replace(upstream2.find("line 4\n"),7,"remote two\n");
             write(root/"pull-test.txt",upstream2); git.checked({"add","pull-test.txt"}); git.commit("Second remote edit"); git.checked({"push"});
             local.pull();
             require(local.checked({"show",":pull-test.txt"}).find("local\n")!=std::string::npos &&
-                    read(clone/"pull-test.txt").find("remote two\n")!=std::string::npos,"Pull lost staged edits in the same file");
+                    read_lines(clone/"pull-test.txt").find("remote two\n")!=std::string::npos,"Pull lost staged edits in the same file");
             upstream = upstream2;
             auto conflict = upstream; conflict.replace(conflict.find("remote\n"),7,"new remote\n");
             write(root/"pull-test.txt",conflict); git.checked({"add","pull-test.txt"}); git.commit("Conflicting edit"); git.checked({"push"});
-            auto local_conflict = read(clone/"pull-test.txt"); local_conflict.replace(local_conflict.find("remote\n"),7,"local conflict\n");
+            auto local_conflict = read_lines(clone/"pull-test.txt"); local_conflict.replace(local_conflict.find("remote\n"),7,"local conflict\n");
             write(clone/"pull-test.txt",local_conflict);
             bool failed = false; try { local.pull(); } catch (const std::exception&) { failed = true; }
             require(failed && !local.load().stashes.empty(),"Conflicting pull did not preserve a backup");

@@ -27,11 +27,11 @@ Easy Git takes inspiration from GitKraken's three-panel interface. It is an inde
 
 ## Debian package
 
-Download the [v0.1.6 amd64 `.deb`](https://github.com/NickCyrusss/easy_git/releases/download/v0.1.6/easy-git_0.1.6_amd64.deb) and [SHA256SUMS](https://github.com/NickCyrusss/easy_git/releases/download/v0.1.6/SHA256SUMS) from [GitHub Releases](https://github.com/NickCyrusss/easy_git/releases/tag/v0.1.6). Packages are built and tested on Ubuntu 22.04 (x86-64).
+Download the [v0.1.7 amd64 `.deb`](https://github.com/NickCyrusss/easy_git/releases/download/v0.1.7/easy-git_0.1.7_amd64.deb) and [SHA256SUMS](https://github.com/NickCyrusss/easy_git/releases/download/v0.1.7/SHA256SUMS) from [GitHub Releases](https://github.com/NickCyrusss/easy_git/releases/tag/v0.1.7). Packages are built and tested on Ubuntu 22.04 (x86-64).
 
 ```sh
 sha256sum -c SHA256SUMS
-sudo apt install ./easy-git_0.1.6_amd64.deb
+sudo apt install ./easy-git_0.1.7_amd64.deb
 ```
 
 The package includes the application-menu launcher and icon. Launch **Easy Git** or run `easy_git`; remove with `sudo apt remove easy-git`. User configuration in `~/.easy_git` is retained.
@@ -45,11 +45,11 @@ ctest --test-dir build-deb --output-on-failure
 (cd build-deb && cpack -G DEB)
 ```
 
-The `.deb` is written to `build-deb/`. Pushing a version tag matching the CMake version (for example `v0.1.6`) runs the release workflow: build and test the Debian package on Ubuntu, verify the install and the desktop entry, build and test the Windows package on `windows-latest`, then upload both assets to GitHub Releases.
+The `.deb` is written to `build-deb/`. Pushing a version tag matching the CMake version (for example `v0.1.7`) runs the release workflow: build and test the Debian package on Ubuntu, verify the install and the desktop entry, build and test the Windows package on `windows-latest`, then upload both assets to GitHub Releases.
 
 ## Windows package
 
-Download [easy_git-win64.zip](https://github.com/NickCyrusss/easy_git/releases/download/v0.1.6/easy_git-win64.zip), extract it, and run `easy_git.exe`. The folder contains the executable, the runtime DLLs, and the license; Git for Windows must be installed and on `PATH`. Build it yourself with the steps under [Windows](#windows) below.
+Download [easy_git-win64.zip](https://github.com/NickCyrusss/easy_git/releases/download/v0.1.7/easy_git-win64.zip), extract it, and run `easy_git.exe`. The folder contains the executable, the runtime DLLs, and the license; Git for Windows must be installed and on `PATH`. Build it yourself with the steps under [Windows](#windows) below.
 
 ## Build and run
 

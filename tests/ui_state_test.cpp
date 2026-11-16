@@ -484,10 +484,15 @@ int main() {
             restored.tabs.size() == 1 && restored.tabs[0]->repo.root == root_b.string(),"Theme/settings/open repositories did not survive restart or a closed repository reopened");
         auto settings_button = [&](float x) {
             auto* modal = ImGui::FindWindowByName("Settings"); require(modal && modal->Active,"Settings did not open");
-            io.AddMousePosEvent(modal->Pos.x+x,modal->Pos.y+modal->Size.y-40); frame(restored);
+            auto& style = ImGui::GetStyle();
+            float save_width = ImGui::CalcTextSize("Save settings").x + 2*style.FramePadding.x;
+            float button_x = style.WindowPadding.x + (x == 60 ? save_width/2 :
+                save_width + style.ItemSpacing.x + (ImGui::CalcTextSize("Cancel").x + 2*style.FramePadding.x)/2);
+            io.AddMousePosEvent(modal->Pos.x+button_x,modal->Pos.y+modal->Size.y-40); frame(restored);
             io.AddMouseButtonEvent(0,true); frame(restored);
             io.AddMouseButtonEvent(0,false); frame(restored); frame(restored);
-            require(!ImGui::FindWindowByName("Settings")->Active,"Settings button did not close the dialog");
+            if (ImGui::FindWindowByName("Settings")->Active)
+                throw std::runtime_error(std::string("Settings button did not close the dialog: ") + (x == 60 ? "Save. " : "Cancel. ") + restored.config_error);
         };
         restored.settings_open = true; frame(restored); frame(restored);
         eg::select_ai_provider(restored.settings_draft,eg::ai_presets()[1]);
