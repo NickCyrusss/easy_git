@@ -239,7 +239,7 @@ Settings read_settings(const std::string& path) {
     s.ui_font = string_value(doc.get(),"ui_font");
     s.diff_font = string_value(doc.get(),"diff_font");
     for (const auto& font : {s.ui_font,s.diff_font})
-        if (!font.empty() && !std::filesystem::path(font).is_absolute()) throw std::runtime_error("Font paths must be absolute.");
+        if (!font.empty() && !std::filesystem::u8path(font).is_absolute()) throw std::runtime_error("Font paths must be absolute.");
     s.active_repository = string_value(doc.get(),"active_repository");
     auto* repos = get(doc.get(),"repositories");
     if (repos) {
@@ -298,7 +298,7 @@ std::string settings_json(const Settings& s) {
 }
 void write_settings(const std::string& path,const Settings& settings) {
     for (const auto& font : {settings.ui_font,settings.diff_font})
-        if (font.size() > 8191 || font.find('\0') != std::string::npos || (!font.empty() && !std::filesystem::path(font).is_absolute()))
+        if (font.size() > 8191 || font.find('\0') != std::string::npos || (!font.empty() && !std::filesystem::u8path(font).is_absolute()))
             throw std::runtime_error("Font paths must be absolute or empty for the default font.");
     if (settings.ui_font_size < 12 || settings.ui_font_size > 20 || settings.diff_font_size < 10 || settings.diff_font_size > 24)
         throw std::runtime_error("Interface font size must be 12-20 px; diff font size must be 10-24 px.");

@@ -1,4 +1,6 @@
-Easy Git v0.1.5
+Easy Git v0.1.6
+
+- Fix the Windows build and font paths containing non-ASCII characters.
 
 - Pull keeps compatible local changes, including staged changes, even when Git is configured to rebase. If a temporary backup cannot be restored, it remains in Stash for recovery.
 - Open a terminal in the current repository from the toolbar.
@@ -8,13 +10,14 @@ Easy Git v0.1.5
 Download the Ubuntu 22.04 amd64 package or the Windows x64 portable archive:
 
 ```sh
-sudo apt install ./easy-git_0.1.5_amd64.deb
+sudo apt install ./easy-git_0.1.6_amd64.deb
 ```
 
 On Windows, extract `easy_git-win64.zip` and run `easy_git.exe`; Git for Windows must be installed and on `PATH`. `SHA256SUMS` contains the Debian package checksum.
 
 ---
 
+- 修复 Windows 构建及包含中文等字符的字体路径。
 - Pull 可保留不冲突的本地修改和暂存状态，Git 配置为 rebase 时也可使用；临时备份无法恢复时会保留在 Stash 中。
 - 工具栏新增 Terminal，在当前仓库目录打开终端。
 - 设置中可分别选择界面和 Diff 字体及字号。

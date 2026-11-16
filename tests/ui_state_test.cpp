@@ -503,8 +503,13 @@ int main() {
         eg::select_ai_provider(restored.settings_draft,eg::ai_presets()[1]);
         restored.settings_draft.ai.model = "saved-kimi-model";
         auto fonts = installed_fonts();
-        require(std::all_of(fonts.begin(),fonts.end(),[](const auto& path) { return usable_font(path); }),"Font list contains unusable files");
-        restored.settings_draft.ui_font = fonts.empty() ? (base/"missing-font.ttf").string() : fonts.front();
+        require(std::all_of(fonts.begin(),fonts.end(),[](const auto& path) { return usable_font(fs::u8path(path)); }),"Font list contains unusable files");
+        auto font_copy = base/fs::u8path("字体")/"font.ttf";
+        if (!fonts.empty()) {
+            fs::create_directories(font_copy.parent_path());
+            fs::copy_file(fs::u8path(fonts.front()),font_copy);
+        }
+        restored.settings_draft.ui_font = font_copy.u8string();
         restored.settings_draft.diff_font = restored.settings_draft.ui_font;
         restored.settings_draft.ui_font_size = 18; restored.settings_draft.diff_font_size = 20;
         eg::select_ai_provider(restored.settings_draft,eg::ai_presets()[0]);

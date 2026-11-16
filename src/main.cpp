@@ -59,7 +59,7 @@ bool usable_font(const fs::path& path) {
 std::vector<std::string> installed_fonts() {
 #ifdef _WIN32
     std::vector<fs::path> roots = {"C:/Windows/Fonts"};
-    if (const char* local = getenv("LOCALAPPDATA")) roots.emplace_back(fs::path(local)/"Microsoft/Windows/Fonts");
+    if (const wchar_t* local = _wgetenv(L"LOCALAPPDATA")) roots.emplace_back(fs::path(local)/"Microsoft/Windows/Fonts");
 #else
     std::vector<fs::path> roots = {"/usr/share/fonts","/usr/local/share/fonts"};
     if (const char* home = getenv("HOME")) {
@@ -74,7 +74,7 @@ std::vector<std::string> installed_fonts() {
         for (fs::recursive_directory_iterator it(root,fs::directory_options::skip_permission_denied,ec), end;
              !ec && it!=end; it.increment(ec)) {
             auto ext = it->path().extension().string();
-            if ((ext==".ttf" || ext==".otf" || ext==".ttc") && usable_font(it->path())) fonts.insert(it->path().string());
+            if ((ext==".ttf" || ext==".otf" || ext==".ttc") && usable_font(it->path())) fonts.insert(it->path().u8string());
         }
     }
     return {fonts.begin(),fonts.end()};
@@ -100,10 +100,10 @@ void load_fonts(const eg::Settings& settings) {
     const auto mono = first_usable(mono_candidates,std::size(mono_candidates));
     const auto cjk = first_usable(cjk_candidates,std::size(cjk_candidates));
     auto add = [&](const std::string& selected,const std::string& fallback,float size) {
-        std::string path = usable_font(selected) ? selected : fallback;
+        std::string path = usable_font(fs::u8path(selected)) ? selected : fallback;
         ImFontConfig fallback_config; fallback_config.SizePixels = size;
-        ImFont* font = usable_font(path) ? atlas->AddFontFromFileTTF(path.c_str(),size) : atlas->AddFontDefault(&fallback_config);
-        if (path!=cjk && usable_font(cjk)) {
+        ImFont* font = usable_font(fs::u8path(path)) ? atlas->AddFontFromFileTTF(path.c_str(),size) : atlas->AddFontDefault(&fallback_config);
+        if (path!=cjk && usable_font(fs::u8path(cjk))) {
             ImFontConfig config; config.MergeMode = true;
             atlas->AddFontFromFileTTF(cjk.c_str(),size,&config);
         }
@@ -2118,7 +2118,7 @@ struct App {
         ImGui::TextWrapped("Saved to: %s",config_path.empty() ? "~/.easy_git" : config_path.c_str());
         ImGui::TextUnformatted("Fonts");
         auto font_choice = [&](const char* label,std::string& selected) {
-            auto name = selected.empty() ? std::string("Default") : fs::path(selected).filename().string();
+            auto name = selected.empty() ? std::string("Default") : fs::u8path(selected).filename().u8string();
             if (ImGui::BeginCombo(label,name.c_str())) {
                 if (ImGui::IsWindowAppearing()) { font_filter[0] = 0; ImGui::SetKeyboardFocusHere(); }
                 ImGui::InputTextWithHint("##font_filter","Search fonts...",font_filter,sizeof(font_filter));
@@ -2126,13 +2126,13 @@ struct App {
                 for (const auto& file : font_choices) {
                     if (!RepoTab::text_matches(file,font_filter)) continue;
                     ImGui::PushID(file.c_str());
-                    if (ImGui::Selectable(fs::path(file).filename().c_str(),selected==file)) selected=file;
+                    if (ImGui::Selectable(fs::u8path(file).filename().u8string().c_str(),selected==file)) selected=file;
                     if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s",file.c_str());
                     ImGui::PopID();
                 }
                 ImGui::EndCombo();
             }
-            if (!selected.empty() && !usable_font(selected)) ImGui::TextWrapped("Font unavailable; the default will be used.");
+            if (!selected.empty() && !usable_font(fs::u8path(selected))) ImGui::TextWrapped("Font unavailable; the default will be used.");
         };
         font_choice("Interface font",settings_draft.ui_font);
         ImGui::SliderInt("Interface size (px)",&settings_draft.ui_font_size,12,20,"%d",ImGuiSliderFlags_AlwaysClamp);

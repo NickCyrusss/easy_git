@@ -10,11 +10,11 @@
 
 ## Debian 安装包
 
-从 [GitHub Releases](https://github.com/NickCyrusss/easy_git/releases/tag/v0.1.5) 下载 [v0.1.5 amd64 安装包](https://github.com/NickCyrusss/easy_git/releases/download/v0.1.5/easy-git_0.1.5_amd64.deb) 和 [SHA256SUMS](https://github.com/NickCyrusss/easy_git/releases/download/v0.1.5/SHA256SUMS)。安装包在 Ubuntu 22.04（x86-64）上构建和验证。
+从 [GitHub Releases](https://github.com/NickCyrusss/easy_git/releases/tag/v0.1.6) 下载 [v0.1.6 amd64 安装包](https://github.com/NickCyrusss/easy_git/releases/download/v0.1.6/easy-git_0.1.6_amd64.deb) 和 [SHA256SUMS](https://github.com/NickCyrusss/easy_git/releases/download/v0.1.6/SHA256SUMS)。安装包在 Ubuntu 22.04（x86-64）上构建和验证。
 
 ```sh
 sha256sum -c SHA256SUMS
-sudo apt install ./easy-git_0.1.5_amd64.deb
+sudo apt install ./easy-git_0.1.6_amd64.deb
 ```
 
 包含应用菜单入口和图标。安装后打开 **Easy Git** 或运行 `easy_git`；卸载使用 `sudo apt remove easy-git`，保留用户目录中的 `~/.easy_git` 配置。
@@ -28,11 +28,11 @@ ctest --test-dir build-deb --output-on-failure
 (cd build-deb && cpack -G DEB)
 ```
 
-产物位于 `build-deb/`。推送与 CMake 版本一致的标签（如 `v0.1.5`）会运行发布工作流：在 Ubuntu 上构建并测试 Debian 安装包、验证安装与桌面入口，在 `windows-latest` 上构建并测试 Windows 包，最后把两者一并上传至 GitHub Releases。
+产物位于 `build-deb/`。推送与 CMake 版本一致的标签（如 `v0.1.6`）会运行发布工作流：在 Ubuntu 上构建并测试 Debian 安装包、验证安装与桌面入口，在 `windows-latest` 上构建并测试 Windows 包，最后把两者一并上传至 GitHub Releases。
 
 ## Windows 安装包
 
-下载 [easy_git-win64.zip](https://github.com/NickCyrusss/easy_git/releases/download/v0.1.5/easy_git-win64.zip)，解压后运行 `easy_git.exe`。压缩包内含可执行文件、运行时 DLL 和许可证；需已安装 Git for Windows 并位于 `PATH`。自行构建见下方 [Windows](#windows) 小节。
+下载 [easy_git-win64.zip](https://github.com/NickCyrusss/easy_git/releases/download/v0.1.6/easy_git-win64.zip)，解压后运行 `easy_git.exe`。压缩包内含可执行文件、运行时 DLL 和许可证；需已安装 Git for Windows 并位于 `PATH`。自行构建见下方 [Windows](#windows) 小节。
 
 ## 构建与启动
 
