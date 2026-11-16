@@ -1,4 +1,6 @@
-Easy Git v0.1.7
+Easy Git v0.1.8
+
+- Fix the Windows UI test renderer and font-dependent confirmation buttons.
 
 - Fix Windows release tests for Git CRLF line endings and font-dependent button sizes.
 
@@ -12,13 +14,14 @@ Easy Git v0.1.7
 Download the Ubuntu 22.04 amd64 package or the Windows x64 portable archive:
 
 ```sh
-sudo apt install ./easy-git_0.1.7_amd64.deb
+sudo apt install ./easy-git_0.1.8_amd64.deb
 ```
 
 On Windows, extract `easy_git-win64.zip` and run `easy_git.exe`; Git for Windows must be installed and on `PATH`. `SHA256SUMS` contains the Debian package checksum.
 
 ---
 
+- 修复 Windows UI 测试的字体图集和确认按钮定位。
 - 修复 Windows 发布测试对 CRLF 换行及不同字体按钮尺寸的兼容性。
 - 修复 Windows 构建及包含中文等字符的字体路径。
 - Pull 可保留不冲突的本地修改和暂存状态，Git 配置为 rebase 时也可使用；临时备份无法恢复时会保留在 Stash 中。

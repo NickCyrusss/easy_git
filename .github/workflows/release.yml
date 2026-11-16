@@ -7,9 +7,9 @@ on:
       tag:
         description: Existing version tag to publish
         required: true
-        default: v0.1.7
+        default: v0.1.8
 env:
-  RELEASE_TAG: ${{ inputs.tag || (github.ref_type == 'tag' && github.ref_name) || 'v0.1.7' }}
+  RELEASE_TAG: ${{ inputs.tag || (github.ref_type == 'tag' && github.ref_name) || 'v0.1.8' }}
 permissions:
   contents: write
 jobs:
@@ -93,7 +93,7 @@ jobs:
           export PATH="/c/Program Files/Git/cmd:$PATH"
           if ! ctest --test-dir build --output-on-failure > build/windows-tests.log 2>&1; then
             cat build/windows-tests.log
-            while IFS= read -r line; do printf '::error::%s\n' "$line"; done < build/windows-tests.log
+            grep 'FAIL:' build/windows-tests.log | while IFS= read -r line; do printf '::error::%s\n' "$line"; done
             exit 1
           fi
           cat build/windows-tests.log

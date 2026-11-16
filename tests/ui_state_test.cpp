@@ -14,11 +14,20 @@
 void require(bool condition, const char* message) {
     if (!condition) throw std::runtime_error(message);
 }
+void render() {
+    ImGui::Render();
+    for (auto* texture : *ImGui::GetDrawData()->Textures) {
+        if (texture->Status == ImTextureStatus_WantCreate) texture->SetTexID(1);
+        if (texture->Status == ImTextureStatus_WantCreate || texture->Status == ImTextureStatus_WantUpdates)
+            texture->SetStatus(ImTextureStatus_OK);
+        else if (texture->Status == ImTextureStatus_WantDestroy) {
+            texture->SetTexID(ImTextureID_Invalid); texture->SetStatus(ImTextureStatus_Destroyed);
+        }
+    }
+}
 void frame(App& app) {
-    bool rebuild = app.fonts_pending && app.config_error.empty();
     app.apply_pending_fonts();
-    if (rebuild) { unsigned char* pixels; int w,h; ImGui::GetIO().Fonts->GetTexDataAsRGBA32(&pixels,&w,&h); }
-    ImGui::NewFrame(); app.frame(false); ImGui::Render();
+    ImGui::NewFrame(); app.frame(false); render();
 }
 void settle(App& app) {
     auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
@@ -42,8 +51,8 @@ int main() {
     fs::path root_a = base / "仓库 A", root_b = base / "仓库 B";
     ImGui::CreateContext();
     auto& io = ImGui::GetIO(); io.DisplaySize = {1440,900}; io.DeltaTime = 1.0f/60;
-    io.IniFilename = nullptr; body_font = mono_font = io.Fonts->AddFontDefault();
-    unsigned char* pixels; int w,h; io.Fonts->GetTexDataAsRGBA32(&pixels,&w,&h);
+    io.IniFilename = nullptr; io.BackendFlags |= ImGuiBackendFlags_RendererHasTextures;
+    body_font = mono_font = io.Fonts->AddFontDefault();
     theme(); App app;
     try {
 #ifdef _WIN32
@@ -604,7 +613,11 @@ int main() {
         require(partial->pending_kind=="discard hunk" && partial->pending_diff_lines.size()==2,"Discard hunk confirmation lost selection");
         auto confirm_discard = [&](bool confirm) {
             auto* modal = ImGui::FindWindowByName("Confirm Git operation"); require(modal && modal->Active,"Discard confirmation missing");
-            io.AddMousePosEvent(modal->Pos.x+(confirm ? 45 : 130),modal->Pos.y+modal->Size.y-30); frame(restored);
+            auto& style = ImGui::GetStyle();
+            float confirm_width = ImGui::CalcTextSize("Confirm").x + 2*style.FramePadding.x;
+            float x = style.WindowPadding.x + (confirm ? confirm_width/2 :
+                confirm_width + style.ItemSpacing.x + (ImGui::CalcTextSize("Cancel").x + 2*style.FramePadding.x)/2);
+            io.AddMousePosEvent(modal->Pos.x+x,modal->Pos.y+modal->Size.y-style.WindowPadding.y-ImGui::GetFrameHeight()/2); frame(restored);
             io.AddMouseButtonEvent(0,true); frame(restored); io.AddMouseButtonEvent(0,false); frame(restored); frame(restored);
             require(partial->pending_kind.empty(),"Discard dialog button did not close confirmation"); settle(restored);
         };
@@ -630,7 +643,7 @@ int main() {
                     require(found != partial->repo.files.end(),"Missing direct action file");
                     partial->file_row(int(found-partial->repo.files.begin()),staged ? 1 : 0);
                 }
-                ImGui::Dummy({0,1}); ImGui::End(); ImGui::Render(); return target;
+                ImGui::Dummy({0,1}); ImGui::End(); render(); return target;
             };
             auto target = draw(); draw();
             io.AddMousePosEvent(target.x,target.y); draw(); draw();
@@ -664,7 +677,7 @@ int main() {
                 ImGui::NewFrame(); ImGui::SetNextWindowPos({20,20}); ImGui::SetNextWindowSize({500,200});
                 ImGui::Begin("Discard control regression",nullptr,ImGuiWindowFlags_NoSavedSettings);
                 auto pos = ImGui::GetCursorScreenPos(); partial->file_controls();
-                ImGui::Dummy({0,1}); ImGui::End(); ImGui::Render(); return ImVec2(pos.x+32,pos.y+14);
+                ImGui::Dummy({0,1}); ImGui::End(); render(); return ImVec2(pos.x+32,pos.y+14);
             };
             auto target=draw(); draw(); io.AddMousePosEvent(target.x,target.y); draw(); draw();
             io.AddMouseButtonEvent(0,true); draw(); io.AddMouseButtonEvent(0,false); draw();
