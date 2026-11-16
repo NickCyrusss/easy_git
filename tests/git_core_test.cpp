@@ -143,6 +143,35 @@ int main(int argc, char** argv) {
         git.checked({"push","-u","origin","main"}); git.checked({"fetch","--all"}); git.checked({"pull","--ff-only"});
         require(!git.run({"switch","--","missing-branch"}).error.empty(),"Git failure was hidden");
 
+        {
+            std::string original; for (int i=0;i<30;++i) original += "line " + std::to_string(i) + "\n";
+            write(root/"pull-test.txt",original); git.checked({"add","pull-test.txt"}); git.commit("Pull test base"); git.checked({"push"});
+            auto clone = base/"pull clone";
+            git.checked({"clone",remote.string(),clone.string()});
+            eg::Git local(clone.string());
+            local.checked({"config","pull.rebase","true"}); local.checked({"config","merge.autoStash","true"});
+            auto upstream = original; upstream.replace(upstream.find("line 1\n"),7,"remote\n");
+            write(root/"pull-test.txt",upstream); git.checked({"add","pull-test.txt"}); git.commit("Remote edit"); git.checked({"push"});
+            auto edited = original; edited.replace(edited.find("line 28\n"),8,"local\n");
+            write(clone/"pull-test.txt",edited); write(clone/"staged.txt","staged\n"); local.checked({"add","staged.txt"});
+            local.pull();
+            require(read(clone/"pull-test.txt").find("remote\n")!=std::string::npos && read(clone/"pull-test.txt").find("local\n")!=std::string::npos,"Pull lost non-overlapping edits");
+            require(local.checked({"show",":staged.txt"})=="staged\n" && local.load().stashes.empty(),"Pull changed staged state or left a backup");
+            local.checked({"add","pull-test.txt"});
+            auto upstream2 = upstream; upstream2.replace(upstream2.find("line 4\n"),7,"remote two\n");
+            write(root/"pull-test.txt",upstream2); git.checked({"add","pull-test.txt"}); git.commit("Second remote edit"); git.checked({"push"});
+            local.pull();
+            require(local.checked({"show",":pull-test.txt"}).find("local\n")!=std::string::npos &&
+                    read(clone/"pull-test.txt").find("remote two\n")!=std::string::npos,"Pull lost staged edits in the same file");
+            upstream = upstream2;
+            auto conflict = upstream; conflict.replace(conflict.find("remote\n"),7,"new remote\n");
+            write(root/"pull-test.txt",conflict); git.checked({"add","pull-test.txt"}); git.commit("Conflicting edit"); git.checked({"push"});
+            auto local_conflict = read(clone/"pull-test.txt"); local_conflict.replace(local_conflict.find("remote\n"),7,"local conflict\n");
+            write(clone/"pull-test.txt",local_conflict);
+            bool failed = false; try { local.pull(); } catch (const std::exception&) { failed = true; }
+            require(failed && !local.load().stashes.empty(),"Conflicting pull did not preserve a backup");
+        }
+
         // Octopus merge, shared ancestor, and an unrelated root exercise lane continuity.
         auto node = [](const char* id, std::vector<std::string> parents) { eg::Commit c; c.id=id; c.parents=std::move(parents); return c; };
         std::vector<eg::Commit> synthetic = {node("M",{"A","B","C"}),node("A",{"R"}),

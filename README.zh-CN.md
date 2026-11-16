@@ -150,6 +150,7 @@ ImGui 固定为 `v1.92.5`，GLFW 固定为 `3.4`，首次配置时由 CMake 下�
 - 提交右键菜单或右侧 **Actions** 提供 **Cherry-pick、Merge、Revert、Reset**；分支右键也可合并到当前分支。对合并提交执行 Cherry-pick / Revert 时可选择主线父提交。
 - **Reset** 支持 Soft（保留暂存区与工作文件）、Mixed（重置暂存区，保留工作文件）、Hard（覆盖暂存区与工作文件）；执行前确认，Hard 还需勾选丢弃本地改动。Hard 也可能删除阻碍恢复路径的未跟踪文件。
 - **Terminal** 位于当前仓库工具栏的 **Refresh** 后，点击后在当前仓库目录打开终端。Linux 使用 `xdg-terminal-exec` 或系统配置的 `x-terminal-emulator`；Windows 打开系统命令解释器（`COMSPEC`）。
+- **Pull** 允许保留不冲突的本地修改和暂存状态；如果临时备份无法自动恢复，会显示错误并保留在 Stash 中供恢复。
 - 顶部 **Pull / Push** 后的 **Stash** 按钮一键保存当前仓库全部已暂存、未暂存和未跟踪改动（不包含被忽略文件），名称取自 **Commit summary**；摘要为空时使用 `Saved from easy git`。成功后清空 **Commit summary**，保留 Description；失败或操作期间输入了新摘要时保留摘要。没有改动、尚无首次提交或操作进行中时不可用。
 - Stash 名称不显示 `stash@{n}` 前缀，提交图中使用紫色 **STASH** 标签与分支标识区分，适配浅色和深色主题；**Commit graph** 中的 Stash 条目紧挨各自基准提交之前显示，并连到该提交；同一基准的多个 Stash 按新到旧排列。显示作者及日期，支持搜索、点击预览、右键 Apply／Delete。基准提交尚未加载时，Stash 仍可在左侧访问，加载到基准提交后再显示到图中。
 - **Stash changes** 保存已跟踪和未跟踪文件。**单击 Stash 仅预览，双击左侧 Stash 直接应用并保留原 Stash**（不恢复原暂存状态，需要时使用右键 Apply 勾选恢复）：右侧显示 Stash Files，点击文件在中央查看 Diff；**右键 Apply / Delete**，执行前确认。Apply 保留原 Stash，可勾选恢复暂存状态；列表已变化时，Delete 拒绝使用过期的位置删除。

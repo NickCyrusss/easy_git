@@ -108,6 +108,10 @@ Result Git::run(const std::vector<std::string>& args) const {
     env.insert(env.end(), {"GIT_TERMINAL_PROMPT=0", "GIT_ASKPASS=/bin/false",
         "SSH_ASKPASS=/bin/false", "GIT_EDITOR=true", "GIT_SEQUENCE_EDITOR=true"});
 #endif
+    if (!args.empty() && args.front() == "pull") {
+        env.erase(std::remove_if(env.begin(),env.end(),[](const auto& e) { return e.rfind("LC_ALL=",0)==0; }),env.end());
+        env.push_back("LC_ALL=C");
+    }
     std::vector<char*> envp;
     for (auto& e : env) envp.push_back(e.data());
     envp.push_back(nullptr);
@@ -402,6 +406,26 @@ void Git::delete_stash(const Stash& stash) const {
 void Git::save_stash(const std::string& message) const {
     require_idle();
     checked({"stash", "push", "--include-untracked", "-m", message.empty() ? "Saved from easy git" : message});
+}
+void Git::pull() const {
+    require_idle();
+    auto first = run({"pull","--ff-only","--no-rebase","--no-autostash"});
+    if (!first.code) return;
+    if (first.error.find("Your local changes to the following files would be overwritten by merge") == std::string::npos)
+        throw std::runtime_error(first.error.empty() ? first.out : first.error);
+    auto previous = run({"rev-parse","--verify","refs/stash"});
+    checked({"stash","push","-m","Easy Git pull backup"});
+    auto id = trim_line(checked({"rev-parse","--verify","refs/stash"}));
+    if (!previous.code && trim_line(previous.out)==id)
+        throw std::runtime_error(first.error);
+    auto pulled = run({"pull","--ff-only","--no-rebase","--no-autostash"});
+    auto restored = run({"stash","apply","--index",id});
+    if (restored.code)
+        throw std::runtime_error("Pull " + std::string(pulled.code ? "failed" : "completed") +
+            ", but local changes could not be restored automatically. They remain in the Easy Git pull backup stash " + id + ".\n" + restored.error);
+    auto top = run({"rev-parse","--verify","refs/stash"});
+    if (!top.code && trim_line(top.out)==id) checked({"stash","drop","stash@{0}"});
+    if (pulled.code) throw std::runtime_error(pulled.error.empty() ? pulled.out : pulled.error);
 }
 std::string Git::operation_in_progress() const {
     auto dir = std::filesystem::path(trim_line(checked({"rev-parse", "--absolute-git-dir"})));

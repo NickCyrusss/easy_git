@@ -69,6 +69,7 @@ public:
     void apply_stash(const Stash& stash, bool restore_index = false) const;
     void delete_stash(const Stash& stash) const;
     void save_stash(const std::string& message) const;
+    void pull() const;
     void cherry_pick(const Commit& commit, int mainline = 0) const;
     void revert(const Commit& commit, int mainline = 0) const;
     void merge(const std::string& id) const;

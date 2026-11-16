@@ -965,7 +965,7 @@ struct RepoTab {
         }
         ImGui::EndDisabled();
         ImGui::SameLine(); if (button("Fetch", ready(), {70,36})) command("Fetch", {"fetch", "--all"});
-        ImGui::SameLine(); if (button("Pull", idle(), {64,36})) command("Pull", {"pull", "--ff-only"});
+        ImGui::SameLine(); if (button("Pull", idle(), {64,36})) mutate("Pull", [](const eg::Git& git) { git.pull(); });
         ImGui::SameLine(); if (button("Push", ready(), {64,36})) mutate("Push", [](const eg::Git& git) { git.push(); });
         if (begin_context_menu("push_menu")) {
             if (ImGui::MenuItem("Force push with lease...",nullptr,false,ready() && repo.has_head)) prepare_force_push();
