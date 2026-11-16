@@ -1,3 +1,29 @@
+Easy Git v0.1.5
+
+- Pull keeps compatible local changes, including staged changes, even when Git is configured to rebase. If a temporary backup cannot be restored, it remains in Stash for recovery.
+- Open a terminal in the current repository from the toolbar.
+- Choose interface and diff fonts and sizes independently in Settings.
+- Double-click sidebar branches to switch, or a stash to apply it. Type after selecting a sidebar entry to filter; the branch selector now focuses its search field when opened.
+
+Download the Ubuntu 22.04 amd64 package or the Windows x64 portable archive:
+
+```sh
+sudo apt install ./easy-git_0.1.5_amd64.deb
+```
+
+On Windows, extract `easy_git-win64.zip` and run `easy_git.exe`; Git for Windows must be installed and on `PATH`. `SHA256SUMS` contains the Debian package checksum.
+
+---
+
+- Pull 可保留不冲突的本地修改和暂存状态，Git 配置为 rebase 时也可使用；临时备份无法恢复时会保留在 Stash 中。
+- 工具栏新增 Terminal，在当前仓库目录打开终端。
+- 设置中可分别选择界面和 Diff 字体及字号。
+- 双击侧栏分支切换，双击 Stash 应用；选择侧栏条目后可直接输入筛选，打开分支下拉框时自动聚焦搜索。
+
+下载 Ubuntu 22.04 amd64 安装包或 Windows x64 免安装压缩包。Windows 用户解压 `easy_git-win64.zip` 后运行 `easy_git.exe`，需安装 Git for Windows 并加入 `PATH`。`SHA256SUMS` 提供 Debian 安装包校验值。
+
+---
+
 Easy Git v0.1.4
 
 - Windows support: the Git process backend now uses CreateProcess with a job object, so the desktop app builds and runs on Windows 10/11 (x64) alongside Linux. Windows releases ship as a portable folder with the MinGW runtime, libcurl, and json-c DLLs.
